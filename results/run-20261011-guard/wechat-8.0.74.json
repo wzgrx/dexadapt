@@ -1,0 +1,69 @@
+{
+    "schema": 1,
+    "app": "com.tencent.mm",
+    "label": "wechat-8.0.74",
+    "apk": {
+        "file": "wechat-8.0.74.apk",
+        "size": 261152116,
+        "sha256": "e69e7fef8de8211695f08fc22e8f374333246c2483e637ae317f7a0f15d564cf"
+    },
+    "durationMs": 281,
+    "targets": [
+        {
+            "key": "xposed-check-class",
+            "type": "class",
+            "status": "SUCCESS",
+            "hits": 1,
+            "resolved": [
+                "com.tencent.mm.app.j3"
+            ],
+            "ms": 32
+        },
+        {
+            "key": "xposed-check-method",
+            "type": "method",
+            "status": "SUCCESS",
+            "hits": 1,
+            "resolved": [
+                "com.tencent.mm.app.j3#a(1)"
+            ],
+            "ms": 11
+        },
+        {
+            "key": "crashuploader-ref",
+            "type": "class",
+            "status": "EXPECTED_FAILURE",
+            "hits": 0,
+            "resolved": [],
+            "ms": 10
+        },
+        {
+            "key": "tinker-application-ref",
+            "type": "class",
+            "status": "EXPECTED_FAILURE",
+            "hits": 0,
+            "resolved": [],
+            "ms": 10
+        },
+        {
+            "key": "root-signal-magisk",
+            "type": "class",
+            "status": "EXPECTED_FAILURE",
+            "hits": 0,
+            "resolved": [],
+            "ms": 10
+        },
+        {
+            "key": "root-signal-su-path",
+            "type": "class",
+            "status": "SUCCESS",
+            "hits": 3,
+            "resolved": [
+                "com.unionpay.a",
+                "h36.d",
+                "jt5.e"
+            ],
+            "ms": 12
+        }
+    ]
+}

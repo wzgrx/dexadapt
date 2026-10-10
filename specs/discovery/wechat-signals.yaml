@@ -1,0 +1,77 @@
+# 发现探测（探索性——寻找微信防检测/上报链的候选目标面）
+# 全部 allowFailure=true；命中结果人工复核后收敛进 x-clean 正式 spec
+app: com.tencent.mm
+label: discovery-signals
+
+targets:
+  - key: sig-magisk
+    type: class
+    allowFailure: true
+    match:
+      strings_contains_ignore_case: ["magisk"]
+
+  - key: sig-superuser
+    type: class
+    allowFailure: true
+    match:
+      strings_contains_ignore_case: ["superuser"]
+
+  - key: sig-supersu
+    type: class
+    allowFailure: true
+    match:
+      strings_contains_ignore_case: ["supersu"]
+
+  - key: sig-busybox
+    type: class
+    allowFailure: true
+    match:
+      strings_contains_ignore_case: ["busybox"]
+
+  - key: sig-su-path
+    type: class
+    allowFailure: true
+    match:
+      strings_contains: ["/system/bin/su"]
+
+  - key: sig-adb-dir
+    type: class
+    allowFailure: true
+    match:
+      strings_contains: ["/data/adb"]
+
+  - key: sig-frida
+    type: class
+    allowFailure: true
+    match:
+      strings_contains_ignore_case: ["frida"]
+
+  - key: sig-xposed-generic
+    type: class
+    allowFailure: true
+    match:
+      strings_contains_ignore_case: ["xposed"]
+
+  - key: sig-crashuploader
+    type: class
+    allowFailure: true
+    match:
+      strings_contains: ["crashuploader"]
+
+  - key: sig-tinker-loader
+    type: class
+    allowFailure: true
+    match:
+      strings_contains: ["com.tencent.tinker.loader.app.TinkerApplication"]
+
+  - key: sig-isHooked-method
+    type: method
+    allowFailure: true
+    match:
+      method_name_contains: ["isHooked"]
+
+  - key: sig-checkHook-method
+    type: method
+    allowFailure: true
+    match:
+      method_name_contains: ["checkHook"]

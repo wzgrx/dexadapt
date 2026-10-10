@@ -10,5 +10,4 @@ apks/
 # 构建与运行产物
 runner/build/
 runner/.gradle/
-results/
 *.log

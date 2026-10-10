@@ -1,0 +1,15 @@
+# wechat-8.0.65 → wechat-8.0.79
+  (sha256 8f74e6f55375 → f2a725bc0430)
+~ [root-signal-su-path] 解析漂移 (3→3 hits):
+    - com.unionpay.a
+    - ie5.e
+    - oicq.wlogin_sdk.request.c
+    + com.unionpay.a
+    + f36.e
+    + he6.d
+~ [xposed-check-class] 解析漂移 (1→1 hits):
+    - com.tencent.mm.app.n6
+    + com.tencent.mm.app.j3
+~ [xposed-check-method] 解析漂移 (1→1 hits):
+    - com.tencent.mm.app.n6#a(1)
+    + com.tencent.mm.app.j3#a(1)

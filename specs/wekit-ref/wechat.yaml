@@ -1,0 +1,16 @@
+# WeKit 对照目标（复刻自 Ujhhgtg/WeKit PreventXposedDetection.kt，仅作交叉验证）
+# 原文: searchPackages("com.tencent.mm.app")
+#       matcher { usingEqStrings("de.robv.android.xposed.XposedBridge",
+#                                "com.zte.heartyservice.SCC.FrameworkBridge") }
+app: com.tencent.mm
+label: wekit-prevent-xposed-ref
+
+targets:
+  - key: wekit-stacktrace-check
+    type: class
+    unique: true
+    match:
+      packages: [com.tencent.mm.app]
+      strings_eq:
+        - "de.robv.android.xposed.XposedBridge"
+        - "com.zte.heartyservice.SCC.FrameworkBridge"

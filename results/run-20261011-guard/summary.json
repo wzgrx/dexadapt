@@ -1,0 +1,29 @@
+{
+    "schema": 1,
+    "spec": "../specs/x-clean/wechat.yaml",
+    "apksDir": "../apks/wechat",
+    "apkCount": 5,
+    "failedWorkers": 0,
+    "reports": [
+        {
+            "label": "wechat-8.0.65",
+            "file": "wechat-8.0.65.json"
+        },
+        {
+            "label": "wechat-8.0.69",
+            "file": "wechat-8.0.69.json"
+        },
+        {
+            "label": "wechat-8.0.74",
+            "file": "wechat-8.0.74.json"
+        },
+        {
+            "label": "wechat-8.0.78",
+            "file": "wechat-8.0.78.json"
+        },
+        {
+            "label": "wechat-8.0.79",
+            "file": "wechat-8.0.79.json"
+        }
+    ]
+}

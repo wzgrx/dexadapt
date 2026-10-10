@@ -1,0 +1,82 @@
+{
+  "wechat-8.0.65": {
+    "apkSha256": "8f74e6f5537573ee",
+    "targets": {
+      "xposed-check-class": [
+        "com.tencent.mm.app.n6"
+      ],
+      "xposed-check-method": [
+        "com.tencent.mm.app.n6#a(1)"
+      ],
+      "root-signal-su-path": [
+        "com.unionpay.a",
+        "ie5.e",
+        "oicq.wlogin_sdk.request.c"
+      ]
+    }
+  },
+  "wechat-8.0.69": {
+    "apkSha256": "e4da5809f2b3305e",
+    "targets": {
+      "xposed-check-class": [
+        "com.tencent.mm.app.l6"
+      ],
+      "xposed-check-method": [
+        "com.tencent.mm.app.l6#a(1)"
+      ],
+      "root-signal-su-path": [
+        "com.unionpay.a",
+        "oicq.wlogin_sdk.request.c",
+        "yj5.e"
+      ]
+    }
+  },
+  "wechat-8.0.74": {
+    "apkSha256": "e69e7fef8de82116",
+    "targets": {
+      "xposed-check-class": [
+        "com.tencent.mm.app.j3"
+      ],
+      "xposed-check-method": [
+        "com.tencent.mm.app.j3#a(1)"
+      ],
+      "root-signal-su-path": [
+        "com.unionpay.a",
+        "h36.d",
+        "jt5.e"
+      ]
+    }
+  },
+  "wechat-8.0.78": {
+    "apkSha256": "c98bd96cddc9a855",
+    "targets": {
+      "xposed-check-class": [
+        "com.tencent.mm.app.j3"
+      ],
+      "xposed-check-method": [
+        "com.tencent.mm.app.j3#a(1)"
+      ],
+      "root-signal-su-path": [
+        "ad6.d",
+        "com.unionpay.a",
+        "d26.e"
+      ]
+    }
+  },
+  "wechat-8.0.79": {
+    "apkSha256": "f2a725bc04302ad2",
+    "targets": {
+      "xposed-check-class": [
+        "com.tencent.mm.app.j3"
+      ],
+      "xposed-check-method": [
+        "com.tencent.mm.app.j3#a(1)"
+      ],
+      "root-signal-su-path": [
+        "com.unionpay.a",
+        "f36.e",
+        "he6.d"
+      ]
+    }
+  }
+}

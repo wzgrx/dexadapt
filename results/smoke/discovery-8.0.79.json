@@ -1,0 +1,136 @@
+{
+    "schema": 1,
+    "app": "com.tencent.mm",
+    "label": "wechat-8.0.79",
+    "apk": {
+        "file": "wechat-8.0.79.apk",
+        "size": 285284760,
+        "sha256": "f2a725bc04302ad218a563533ae79356e66b64aa711b275bc919a8d432f7e15d"
+    },
+    "durationMs": 344,
+    "targets": [
+        {
+            "key": "sig-magisk",
+            "type": "class",
+            "status": "EXPECTED_FAILURE",
+            "hits": 0,
+            "resolved": [],
+            "ms": 33
+        },
+        {
+            "key": "sig-superuser",
+            "type": "class",
+            "status": "SUCCESS",
+            "hits": 1,
+            "resolved": [
+                "com.tencent.mm.ui.chatting.component.cj"
+            ],
+            "ms": 13
+        },
+        {
+            "key": "sig-supersu",
+            "type": "class",
+            "status": "EXPECTED_FAILURE",
+            "hits": 0,
+            "resolved": [],
+            "ms": 13
+        },
+        {
+            "key": "sig-busybox",
+            "type": "class",
+            "status": "EXPECTED_FAILURE",
+            "hits": 0,
+            "resolved": [],
+            "ms": 8
+        },
+        {
+            "key": "sig-su-path",
+            "type": "class",
+            "status": "SUCCESS",
+            "hits": 3,
+            "resolved": [
+                "com.unionpay.a",
+                "f36.e",
+                "he6.d"
+            ],
+            "ms": 10
+        },
+        {
+            "key": "sig-adb-dir",
+            "type": "class",
+            "status": "EXPECTED_FAILURE",
+            "hits": 0,
+            "resolved": [],
+            "ms": 10
+        },
+        {
+            "key": "sig-frida",
+            "type": "class",
+            "status": "EXPECTED_FAILURE",
+            "hits": 0,
+            "resolved": [],
+            "ms": 11
+        },
+        {
+            "key": "sig-xposed-generic",
+            "type": "class",
+            "status": "SUCCESS",
+            "hits": 282,
+            "resolved": [
+                "a82.g0",
+                "a82.s",
+                "aa4.e",
+                "af4.f",
+                "af4.o",
+                "au2.f",
+                "au2.o0",
+                "au2.v0",
+                "aw2.g",
+                "b00.r",
+                "b95.p",
+                "b95.r",
+                "bt3.i0",
+                "bt3.u",
+                "bu0.o",
+                "ch2.k3",
+                "ch2.u3",
+                "co5.b0",
+                "co5.z",
+                "com.google.android.gms.internal.measurement.zzjh"
+            ],
+            "ms": 20
+        },
+        {
+            "key": "sig-crashuploader",
+            "type": "class",
+            "status": "EXPECTED_FAILURE",
+            "hits": 0,
+            "resolved": [],
+            "ms": 12
+        },
+        {
+            "key": "sig-tinker-loader",
+            "type": "class",
+            "status": "EXPECTED_FAILURE",
+            "hits": 0,
+            "resolved": [],
+            "ms": 10
+        },
+        {
+            "key": "sig-isHooked-method",
+            "type": "method",
+            "status": "EXPECTED_FAILURE",
+            "hits": 0,
+            "resolved": [],
+            "ms": 10
+        },
+        {
+            "key": "sig-checkHook-method",
+            "type": "method",
+            "status": "EXPECTED_FAILURE",
+            "hits": 0,
+            "resolved": [],
+            "ms": 4
+        }
+    ]
+}
