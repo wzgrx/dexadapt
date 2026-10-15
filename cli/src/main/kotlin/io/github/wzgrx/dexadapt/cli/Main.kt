@@ -51,6 +51,12 @@ private const val USAGE = """dexadapt <命令> [参数]
   codegen --spec <spec.yaml> --package <包名> [--class <类名>] --out <输出.kt>
       生成类型化访问器（Kotlin）：access.<组>.<成员>(...)，代替按名字反射；找不到的符号抛 SymbolUnavailable。
 
+  keygen --out <私钥文件>
+      生成共享适配表的签名密钥（ECDSA P-256）：私钥写进文件（只有自己可读，不要提交），公钥打印出来放进模块。
+
+  sign --key <私钥文件> <表.json> [...]
+      给共享适配表签名，写出同名 .sig。表要先盖上共享表身份（generator=ci、catalog=模块的目录指纹）。
+
   mcp
       作为 MCP 服务运行（标准输入输出），把上面的命令提供给 Claude 这类 Agent 调用。
 
@@ -85,6 +91,8 @@ fun run(args: List<String>): Int {
         "libs-db" -> libsDb(opts)
         "mcp" -> { Mcp.serve(); 0 }
         "codegen" -> codegen(opts)
+        "keygen" -> keygen(opts)
+        "sign" -> sign(opts)
         "help", "-h", "--help" -> { println(USAGE); 0 }
         else -> { System.err.println("不认识的命令 $cmd\n\n$USAGE"); 1 }
     }
@@ -215,6 +223,33 @@ private fun diff(opts: Opts): Int {
             symbols?.counts?.let { println("模块符号：" + it.entries.joinToString("，") { (k, v) -> "$k $v" }) }
             println("输出在 ${out.path}/（report.md、report.json、mapping.txt）")
         }
+    }
+    return 0
+}
+
+private fun keygen(opts: Opts): Int {
+    val out = File(opts.need("out"))
+    require(!out.exists()) { "${out.path} 已经存在，不覆盖（丢了私钥就只能换公钥、发新版模块）" }
+    val keys = io.github.wzgrx.dexadapt.TableSignature.generate()
+    out.absoluteFile.parentFile?.mkdirs()
+    out.writeText(keys.privateKey + "\n")
+    out.setReadable(false, false); out.setReadable(true, true)
+    out.setWritable(false, false); out.setWritable(true, true)
+    println("私钥：${out.path}（只有自己可读，不要提交到仓库）")
+    println("公钥：${keys.publicKey}")
+    return 0
+}
+
+private fun sign(opts: Opts): Int {
+    val key = File(opts.need("key")).readText().trim()
+    val tables = opts.positional.ifEmpty { error("缺少要签名的表") }.map(::File)
+    for (t in tables) {
+        val table = SymbolTable.fromJson(t.readText())
+        require(table.generator == io.github.wzgrx.dexadapt.runtime.SharedTables.GENERATOR && table.catalog.isNotEmpty()) {
+            "${t.path} 没有盖共享表身份（generator=ci、catalog）"
+        }
+        File(t.path + ".sig").writeText(io.github.wzgrx.dexadapt.TableSignature.sign(t.readBytes(), key))
+        println("${t.path}.sig")
     }
     return 0
 }

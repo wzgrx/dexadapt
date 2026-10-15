@@ -13,9 +13,9 @@ object AdaptPolicy {
     data class Choice(val table: SymbolTable?, val source: Source, val needsAdaptation: Boolean) {
         /**
          * 这张表要不要先观察（[ContractMonitor]）：本机 DexKit 适配出的表没在电脑上验证过，带契约的 Hook 点先观察；
-         * 内置表在电脑上逐版本验证过，直接用。
+         * 内置表和下载的共享表（[SharedTables]，CI 生成）在电脑上验证过，直接用。
          */
-        val observe: Boolean get() = source == Source.LOCAL || source == Source.STALE_LOCAL
+        val observe: Boolean get() = (source == Source.LOCAL || source == Source.STALE_LOCAL) && table?.generator != SharedTables.GENERATOR
     }
 
     enum class Source { LOCAL, BUNDLED, STALE_LOCAL, NONE }

@@ -12,6 +12,7 @@ dependencies {
     implementation(project(":diff"))
     implementation(project(":synth"))
     implementation(project(":libs"))
+    implementation(project(":runtime"))
     testImplementation(libs.junit)
 }
 
