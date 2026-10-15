@@ -31,7 +31,16 @@ data class SymbolTable(
     /** 解析用时（秒）和触发原因，给“版本适配”页和扫描报告看。 */
     val seconds: Long = 0,
     val reason: String = "",
+    /**
+     * 解析不到的符号里推测出的位置（分级回退，设计 10.8）：不在 [entries] 里，运行时只在有契约、观察通过后才用。
+     * 符号仍然记在 [missing] 里。
+     */
+    val guesses: Map<String, Guessed> = emptyMap(),
 ) {
+    /** 推测的位置和推测方法。 */
+    @Serializable
+    data class Guessed(val at: Resolved, val how: String)
+
     fun toJson(): String = json.encodeToString(serializer(), this)
 
     companion object {

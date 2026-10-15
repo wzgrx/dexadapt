@@ -59,4 +59,11 @@ class SymbolHooksTest {
         assertTrue(SymbolHooks(linker).gate(greet).open)
         assertFalse(SymbolHooks.onMainThread())
     }
+
+    @Test
+    fun `guessed locations are used only when allowed`() {
+        val guessed = table.copy(guesses = mapOf("t.gone" to SymbolTable.Guessed(Resolved.Method(Target::class.java.name, "greet", listOf("java.lang.String"), "java.lang.String"), "test")))
+        assertFalse(SymbolLinker(guessed, javaClass.classLoader).available(missing))
+        assertTrue(SymbolLinker(guessed, javaClass.classLoader, useGuess = { it == "t.gone" }).available(missing))
+    }
 }

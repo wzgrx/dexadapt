@@ -26,6 +26,11 @@ class SymbolLinker(
     /** 没有表时的说明（给界面看），例如“此版本未适配”。 */
     private val unsupported: String = "此版本未适配",
     private val log: (String) -> Unit = {},
+    /**
+     * 哪些符号可以用推测的位置（[SymbolTable.guesses]）。默认都不用；用的话必须保证这些点在观察模式下验证过才真正起作用
+     * （例如只允许有契约的方法符号，Hook 由 ContractMonitor 把关）。
+     */
+    private val useGuess: (String) -> Boolean = { false },
 ) {
     private class State(val table: SymbolTable?) {
         val cache = ConcurrentHashMap<String, Result<Any>>()
@@ -91,6 +96,7 @@ class SymbolLinker(
             runCatching {
                 val t = s.table ?: throw SymbolUnavailable(symbol.id, unsupported)
                 val entry = t.entries[symbol.id]
+                    ?: t.guesses[symbol.id]?.takeIf { useGuess(symbol.id) }?.at?.also { log("symbol ${symbol.id} uses a guessed location: ${t.guesses[symbol.id]?.how}") }
                     ?: throw SymbolUnavailable(symbol.id, t.missing[symbol.id]?.let { "未找到（$it）" } ?: "符号表中没有")
                 build(entry as R).also { s.ids[it] = symbol.id }
             }.onFailure { log("symbol ${symbol.id} unavailable: ${it.message}") }

@@ -93,6 +93,51 @@ class SymbolResolver(
         return result
     }
 
+    /** 分级回退（设计 10.8）推测出的位置和推测方法。 */
+    data class Guess(val resolved: Resolved, val how: String)
+
+    /**
+     * [symbol] 按查询解析不到时推测位置（只推测、不当真）：
+     * 1. 逐个去掉一个条件（先去形状条件，最后才去字符串、调用关系这些锚），去掉后唯一的；
+     * 2. [previous]（别的版本解析出的位置）在这个安装包里原样还在的。
+     * 都没有返回 null。结果放进 [SymbolTable.guesses]，运行时只在有契约、观察通过后才用（见 SymbolLinker）。
+     */
+    fun guess(symbol: Symbol, previous: List<Resolved> = emptyList()): Guess? {
+        if (skip(symbol) || pinFor(symbol) != null || resolve(symbol).isSuccess) return null
+        val variants = SymbolMargin.variants(symbol).sortedBy { (label, _) -> if (SymbolMargin.isAnchor(label)) 1 else 0 }
+        for ((label, q) in variants) {
+            val found: List<Resolved> = runCatching {
+                when (q) {
+                    is ClassQuery -> findClasses(q).map { Resolved.Class(it.name) }
+                    is MethodQuery ->
+                        if (q.owner == null && q.shape.strings.isEmpty() && q.packagePrefix == null && q.calledBy.isEmpty()) emptyList()
+                        else preferReal(findMethods(q)).map { Resolved.Method(it.owner, it.name, it.params, it.returns) }
+                    is FieldQuery -> findFields(q).map { Resolved.Field(it.owner, it.name, it.type) }
+                    else -> emptyList()
+                }
+            }.getOrDefault(emptyList())
+            if (found.size == 1) return Guess(found[0], "去掉条件 $label 后唯一")
+        }
+        previous.distinct().firstOrNull(::exists)?.let { return Guess(it, "别的版本解析出的位置在这个安装包里还在") }
+        return null
+    }
+
+    /** 给 [table] 里解析不到的符号做推测（[previous] 给出某个符号在别的版本的位置）。 */
+    fun withGuesses(table: SymbolTable, symbols: List<Symbol>, previous: (String) -> List<Resolved> = { emptyList() }): SymbolTable {
+        val guesses = sortedMapOf<String, SymbolTable.Guessed>()
+        for (s in symbols) {
+            if (s.id !in table.missing) continue
+            guess(s, previous(s.id))?.let { g -> guesses[s.id] = SymbolTable.Guessed(g.resolved, g.how) }
+        }
+        return if (guesses.isEmpty()) table else table.copy(guesses = guesses)
+    }
+
+    private fun exists(r: Resolved): Boolean = when (r) {
+        is Resolved.Class -> source.classByName(r.name) != null
+        is Resolved.Method -> source.classByName(r.owner)?.methods?.any { it.name == r.name && it.params == r.params && it.returns == r.returns } == true
+        is Resolved.Field -> source.classByName(r.owner)?.fields?.any { it.name == r.name && it.type == r.type } == true
+    }
+
     /**
      * [symbol] 的余量（见 [SymbolMargin]）：逐个去掉一个条件后的候选数。钉死、跳过、没解析出来、按类名找的符号
      * 返回 null。只在电脑上用（去掉起点条件后会扫全部类）。

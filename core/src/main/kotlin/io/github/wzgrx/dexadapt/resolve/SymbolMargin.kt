@@ -46,6 +46,9 @@ data class SymbolMargin(val id: String, val drops: List<Drop>) {
             "fieldNames[", "fieldOf", "samePackageAs", "excludes[", "sourceFile", "annotations[", "numbers[",
         )
 
+        /** [label]（[variants] 给的条件说明）是不是“锚”条件（字符串、调用关系等，去掉它查询就失去起点）。 */
+        fun isAnchor(label: String): Boolean = ANCHORS.any { label.startsWith(it) }
+
         /** [symbol] 的查询逐个去掉一个条件后的变体（条件说明 to 变体查询）。 */
         fun variants(symbol: Symbol): List<Pair<String, Any>> = when (symbol) {
             is ClassSymbol -> classVariants(symbol.query)
