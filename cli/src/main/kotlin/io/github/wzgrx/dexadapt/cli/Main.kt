@@ -41,6 +41,16 @@ private const val USAGE = """dexadapt <命令> [参数]
       新版找不到的符号：诊断是哪个条件不满足，给出修好的查询（逐个放宽条件，或按混淆映射找到新位置重新生成），
       每条都在新旧两版验证过。不给 --id 时修全部找不到的。
 
+  libs <安装包> [--db <指纹库>] [--out <目录>]
+      认出打包的开源库（OkHttp、Retrofit、RxJava、Gson、协程……）：版本、混淆后的类对应库里的哪个类、包被改到了哪里。
+      输出 libs.md、libs.json、libs-mapping.txt（jadx 加载后混淆的库类显示回原名）。默认用随 DexAdapt 发布的指纹库。
+
+  libs-db --out <指纹库.json.gz> [--lib <group:artifact=显示名> ...] [--add-to <已有指纹库>]
+      从 Maven 仓库下载开源库的各个版本，建指纹库。不给 --lib 时收录内置的常用库列表。
+
+  mcp
+      作为 MCP 服务运行（标准输入输出），把上面的命令提供给 Claude 这类 Agent 调用。
+
   export --spec <输入> --out <输出.yaml|输出.json>
       spec 转换格式（YAML ⇄ JSON）。
 
@@ -68,6 +78,9 @@ fun run(args: List<String>): Int {
         "diff" -> diff(opts)
         "suggest" -> suggest(opts)
         "repair" -> repair(opts)
+        "libs" -> libs(opts)
+        "libs-db" -> libsDb(opts)
+        "mcp" -> { Mcp.serve(); 0 }
         "help", "-h", "--help" -> { println(USAGE); 0 }
         else -> { System.err.println("不认识的命令 $cmd\n\n$USAGE"); 1 }
     }
@@ -183,8 +196,12 @@ private fun diff(opts: Opts): Int {
                 val tb = SymbolResolver.forBuild(ib, b.info.versionCode, opts.get("new-build")).table(s.catalog.symbols)
                 io.github.wzgrx.dexadapt.diff.SymbolDiff.of(ta, tb, mapping, ia, ib)
             }
+            val libraries = libraryDb(opts)?.let { db ->
+                val scanner = io.github.wzgrx.dexadapt.libs.LibraryScanner(db)
+                libraryDelta(scanner.scan(ia), scanner.scan(ib))
+            } ?: io.github.wzgrx.dexadapt.diff.Delta()
             val report = io.github.wzgrx.dexadapt.diff.DiffReport(
-                io.github.wzgrx.dexadapt.diff.PackageDiff.of(a.info, b.info), io.github.wzgrx.dexadapt.diff.CodeDiff.of(ia, ib, mapping), symbols,
+                io.github.wzgrx.dexadapt.diff.PackageDiff.of(a.info, b.info), io.github.wzgrx.dexadapt.diff.CodeDiff.of(ia, ib, mapping), symbols, libraries,
             )
             File(out, "report.md").writeText(report.markdown())
             File(out, "report.json").writeText(json.encodeToString(io.github.wzgrx.dexadapt.diff.DiffReport.serializer(), report) + "\n")
@@ -195,6 +212,57 @@ private fun diff(opts: Opts): Int {
             println("输出在 ${out.path}/（report.md、report.json、mapping.txt）")
         }
     }
+    return 0
+}
+
+private fun libraryDb(opts: Opts): io.github.wzgrx.dexadapt.libs.LibraryDb? =
+    opts.get("db")?.let { io.github.wzgrx.dexadapt.libs.LibraryDb.read(File(it)) } ?: io.github.wzgrx.dexadapt.libs.LibraryDb.bundled()
+
+/** 两个版本认出的库比一比：新增、去掉、版本变了。 */
+private fun libraryDelta(old: List<io.github.wzgrx.dexadapt.libs.LibraryScanner.Detection>, new: List<io.github.wzgrx.dexadapt.libs.LibraryScanner.Detection>): io.github.wzgrx.dexadapt.diff.Delta {
+    val o = old.associateBy { it.id }
+    val n = new.associateBy { it.id }
+    return io.github.wzgrx.dexadapt.diff.Delta(
+        added = (n.keys - o.keys).sorted().map { "${n.getValue(it).name} ${n.getValue(it).versionText}" },
+        removed = (o.keys - n.keys).sorted().map { "${o.getValue(it).name} ${o.getValue(it).versionText}" },
+        changed = (o.keys intersect n.keys).sorted().filter { o.getValue(it).versions != n.getValue(it).versions }
+            .map { "${n.getValue(it).name}：${o.getValue(it).versionText} → ${n.getValue(it).versionText}" },
+    )
+}
+
+private fun libs(opts: Opts): Int {
+    val path = File(opts.positional.firstOrNull() ?: error("缺少安装包路径"))
+    val db = libraryDb(opts) ?: error("没有指纹库：用 --db 指定，或先用 libs-db 建一个")
+    val out = File(opts.get("out") ?: "dexadapt-libs").apply { mkdirs() }
+    Engines.open(path, Engine.DEXLIB).use { o ->
+        val index = o.source as? io.github.wzgrx.dexadapt.dexlib.DexIndex ?: error("拆分包里有多份代码的暂不支持")
+        val found = io.github.wzgrx.dexadapt.libs.LibraryScanner(db).scan(index)
+        File(out, "libs.md").writeText(io.github.wzgrx.dexadapt.libs.LibraryReport.markdown(o.info.label, found))
+        File(out, "libs.json").writeText(
+            json.encodeToString(kotlinx.serialization.builtins.ListSerializer(io.github.wzgrx.dexadapt.libs.LibraryScanner.Detection.serializer()), found) + "\n",
+        )
+        File(out, "libs-mapping.txt").writeText(io.github.wzgrx.dexadapt.libs.LibraryReport.proguard(found))
+        found.forEach { d -> println("${d.name} ${d.versionText}（可信度${d.confidence}，${d.hits}/${d.total} 个特征字符串，配上 ${d.classes.size} 个类，${d.classes.size - d.namesKept} 个改了名）") }
+        println("输出在 ${out.path}/（libs.md、libs.json、libs-mapping.txt）")
+    }
+    return 0
+}
+
+private fun libsDb(opts: Opts): Int {
+    val out = File(opts.need("out"))
+    val entries = opts.all("lib").map { spec ->
+        val parts = spec.split('=', limit = 2)
+        val coords = parts[0]
+        val name = parts.getOrElse(1) { coords.substringAfter(':') }
+        val (g, a) = coords.split(':').takeIf { it.size == 2 } ?: error("--lib 要写成 group:artifact=显示名")
+        io.github.wzgrx.dexadapt.libs.KnownLibraries.Entry(g, a, name)
+    }.ifEmpty { io.github.wzgrx.dexadapt.libs.KnownLibraries.ALL }
+    val built = io.github.wzgrx.dexadapt.libs.KnownLibraries.build(io.github.wzgrx.dexadapt.libs.Maven(), entries) { println(it) }
+    val base = opts.get("add-to")?.let { io.github.wzgrx.dexadapt.libs.LibraryDb.read(File(it)) }
+    val db = base?.let { b -> built.libraries.fold(b) { acc, l -> acc.with(l) } } ?: built
+    out.absoluteFile.parentFile?.mkdirs()
+    db.write(out)
+    println("${db.libraries.size} 个库，写到 ${out.path}（${out.length() / 1024} KB）")
     return 0
 }
 

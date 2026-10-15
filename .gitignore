@@ -9,6 +9,5 @@ local.properties
 
 # APK 样本（大文件，不入库；来源和签名记在各目录的 PROVENANCE.txt）
 apks/*/
-# 旧版验证台的第三方源码和二进制
+# 旧版验证台在本机放的第三方源码（不入库）
 third_party/
-libs/

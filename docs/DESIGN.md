@@ -1,4 +1,4 @@
-# DexAdapt 设计方案（草案）
+# DexAdapt 设计方案
 
 > 状态：草案，待确认后实施。仓库原名 x-clean-harness（桌面 DexKit 验证台），2026-10-15 改名 DexAdapt。
 
@@ -240,6 +240,27 @@ dexadapt/
 | M4 | `diff`：包、清单、原生库、资源、代码、字符串、混淆映射、模块视角 | 小红书 9.49.1→9.50.0、微信 8.0.78→8.0.79 出完整报告；红薯助手 188 个漂移符号里映射能还原的比例写进报告 |
 | M5 | `synth`：`suggest`、`repair` | 拿红薯助手历史上真修过的两次（9.50.0 attachBrowser、hideOverlay）复现：工具给出的查询能用 |
 | M6 | `android` 运行时库，从红薯助手的 HostAdapter / HostSymbols 抽出通用部分 | 红薯助手改用后真机热适配照常 |
+| M7 | `libs`：开源库识别（10.3） | R8 混淆的 OkHttp 认出版本、类对应精度 ≥ 90%；小红书里认出 OkHttp 3.14、Retrofit、RxJava 2 |
+| M8 | `dexadapt mcp`：命令作为 MCP 工具（11.2 第 5 点） | JSON-RPC 往返测试；Claude Code 能接上 |
+
+### 进度（2026-10-15）
+
+M1～M8 全部完成，第一个使用方是红薯助手（小红书），微信以后再接。
+
+| 编号 | 结果 |
+|---|---|
+| M1 | 红薯助手 512 个符号 × 4 个小红书版本，DexAdapt 解析结果和原内置表逐条相同 |
+| M2 | 红薯助手通过复合构建引用 DexAdapt，`verify.sh` 全过 |
+| M3 | `matrix --spec catalog.yaml` 逐字节复现红薯助手 4 张内置表；dexlib 和 DexKit 0 差异 |
+| M4 | 国内版 9.49.1 → 9.50.0：27.8 万个类配上 27.0 万；已知 206 个类精度 1.000、召回 0.995；模块符号 324 不变、188 改名跟上、0 找不到 |
+| M5 | `suggest` 抽样 55 个类写出 49 个、全部正确；`repair` 复现 9.50.0 attachBrowser 的修法；hideOverlay 生成“两个稀有字符串 + 稳定 API 调用”的查询 |
+| M6 | `runtime`（SymbolLinker、AdaptPolicy）+ `DexKitScan`，红薯助手的宿主进程和模块 App 都改用 |
+| M7 | 19 个常用库的指纹库；小红书认出 12 个库及版本；R8 混淆的 OkHttp 3.14.9 版本认对、类对应 56/60 |
+| M8 | `dexadapt mcp`：8 个工具（inspect、resolve、matrix、diff、suggest、repair、libs、export） |
+
+第 10、11 节里还没做的（按价值）：Hook 契约和观察模式（10.1）、类型安全访问器的代码生成（10.5）、共享适配表（10.6）、
+APK 索引记录文件（11.2 第 4 点，矩阵和 diff 更快）、ReVanced / QAuxiliary 指纹导入（11.2 第 1 点）、
+`DexKitCacheBridge`（11.2 第 6 点，API 还在变）、HTML 报告、R8 感知的 diff（11.2 第 7 点）。
 
 ## 9. 风险与边界
 

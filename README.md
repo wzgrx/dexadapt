@@ -1,47 +1,98 @@
 # DexAdapt
 
-给 LSPosed / Xposed 模块用的**通用版本适配工具链和运行时库**：宿主 App 一升级、混淆名全变，模块就得重新适配——
-DexAdapt 让 Hook 点只写一次、跟着版本走，升级时告诉你变了什么、哪里会坏，坏了给出修复线索。
+给 LSPosed / Xposed 模块用的**通用版本适配工具链和运行时库**。宿主 App 一升级，混淆名全变，模块就得重新适配。
+DexAdapt 让 Hook 点只写一次、跟着版本走：升级时告诉你变了什么、哪里会坏，坏了直接给出修好的查询；
+用户手机上的宿主升级了，模块当场重新适配，不用等发版。
 
-设计方案见 [docs/DESIGN.md](docs/DESIGN.md)，查询语法见 [docs/SPEC.md](docs/SPEC.md)。第一个使用方是
-[红薯助手](https://github.com/wzgrx/redbook-helper-offline)（小红书模块，512 个 Hook 点、4 个内置版本）。
+第一个使用方是 [红薯助手](https://github.com/wzgrx/redbook-helper-offline)（小红书模块：512 个 Hook 点，国内版和
+Google Play 版共 4 个内置版本）。设计方案见 [docs/DESIGN.md](docs/DESIGN.md)，查询语法见 [docs/SPEC.md](docs/SPEC.md)。
 
 ## 思路
 
-不写混淆名，写**特征**：字符串常量、没混淆的类名、Gson 字段名、注解（Retrofit 路径）、源文件名、调用关系、字段读写、
-方法形状、指令顺序……每个 Hook 点是一条“查询”，**唯一命中**才算找到。同一套查询：
+不写混淆名，写**特征**：字符串常量、没混淆的类名、Gson 字段名、注解（Retrofit 路径）、源文件名、数字常量、
+调用关系、字段读写、方法形状、指令顺序……每个 Hook 点是一条“查询”，**唯一命中**才算找到，多命中、零命中都不猜。
 
-- 电脑上用 dexlib2 全量索引解析，生成随模块打包的内置表、做分析；
-- 手机上用 DexKit 现场解析，宿主升级了也能当场适配。
+同一套查询在两个地方解析，结果逐条一致（小红书 4 个版本 × 512 个符号实测）：
 
-两个引擎共用一个解析器，结果逐条一致（小红书 4 个版本 × 512 个符号实测）。
+- **电脑上**用 dexlib2 全量索引：生成随模块打包的内置表、做升级分析；
+- **手机上**用 DexKit 现场解析：宿主升级到没内置的版本，模块 App 在后台扫一遍，宿主当场热替换。
+
+## 能做什么
+
+| 问题 | 命令 / 模块 | 效果（小红书实测） |
+|---|---|---|
+| 升级了什么 | `inspect`、`diff` | 签名、清单、原生库、开源库、网络接口、字符串的变化；旧类 → 新类的混淆映射（9.49.1 → 9.50.0：27 万个类配上 97%，已知的 206 个类精度 100%、召回 99.5%）；输出 jadx 能加载的 `mapping.txt` |
+| 模块哪里会坏 | `diff --spec` | 每个 Hook 点：位置不变 / 改名但跟上了 / 找不到（附推测位置）/ 方法体变化大 / Hook 可能不生效（会被内联、抽象方法） |
+| 自动适配 | `runtime`、`dexkit` | 内置表 → 本机 DexKit 适配 → 只停用找不到的功能；表和安装包身份不符时不用 |
+| 写查询、修查询 | `suggest`、`repair` | 从 jadx 里看到的目标自动写出最稳的查询（抽样 55 个类，写出 49 个，全部正确）；新版找不到的符号诊断原因、给出修好的查询（复现了历史上手工修的 attachBrowser） |
+| 查询够不够稳 | `matrix` | 多版本矩阵、漂移、余量（去掉一个条件就不唯一的“单点依赖”）、DexKit 一致性 |
+| 打包的开源库 | `libs` | 认出 19 个常用库的版本，把混淆后的库类配回原名：小红书里认出 OkHttp 3.14.9、Retrofit 2.8～2.9、RxJava 2、Gson 2.9.1、协程 1.7.3 等 12 个；R8 混淆的 OkHttp 版本认对、类对应 56/60 正确 |
+| 给 Agent 用 | `mcp` | 以上命令作为 MCP 工具，Claude 这类 Agent 可以直接跑“出报告 → 修查询 → 验证” |
 
 ## 模块
 
 | 模块 | 内容 |
 |---|---|
-| `core` | 查询模型（Kotlin DSL / YAML / JSON）、解析器、符号表、目录指纹、依赖图检查、余量（脆弱度）分析、版本矩阵 |
-| `apk` | 安装包档案：二进制清单、签名（apksig）、拆分包、原生库、另外加载的 dex |
+| `core` | 查询模型（Kotlin DSL / YAML / JSON）、解析器、符号表、目录指纹、依赖图检查、余量分析、版本矩阵 |
+| `apk` | 安装包档案：二进制清单、签名（apksig）、拆分包 / `.apks` / `.xapk`、原生库、另外加载的 dex |
 | `dexlib` | dexlib2 全量索引（电脑） |
-| `dexkit` | DexKit 数据源（手机；电脑上配 `dexkit-desktop`） |
+| `dexkit` | DexKit 数据源和 `DexKitScan`（手机；电脑上配 `dexkit-desktop`） |
 | `dexkit-desktop` | 电脑上用 DexKit：JVM 类 + 桌面原生库加载 |
-| `diff` | 升级分析：包和清单、代码规模、网络接口、字符串、混淆映射（旧类 → 新类）、模块视角 |
-| `cli` | 命令行：`inspect` / `resolve` / `matrix` / `diff` / `export` |
+| `runtime` | 手机运行时：`SymbolLinker`（表 → 反射对象，热替换）、`AdaptPolicy`（选表、要不要扫、本机表的身份、自检） |
+| `diff` | 升级分析：包和清单、代码、网络接口、字符串、混淆映射、模块视角、方法体相似度、Hook 风险 |
+| `synth` | `suggest`（自动写查询）、`repair`（自动修查询） |
+| `libs` | 开源库识别：Maven 上官方构件的指纹库、版本判断、类对应 |
+| `cli` | 命令行和 MCP 服务 |
 
 ## 命令行
 
 ```bash
-./gradlew :cli:installDist                       # 生成 cli/build/install/dexadapt/bin/dexadapt
-dexadapt inspect app.apk                         # 安装包档案（签名是否被改过、清单、dex、原生库）
-dexadapt resolve --spec hooks.yaml --apk app.apk # 按 spec 解析一个版本
-dexadapt matrix --spec hooks.yaml --apk v1.apk --apk v2.apk --parity   # 多版本矩阵 + 漂移 + 余量 + DexKit 一致性
-dexadapt diff old.apk new.apk --spec hooks.yaml  # 升级分析报告 + mapping.txt（jadx 可加载）
-dexadapt export --spec hooks.yaml --out hooks.json
+./gradlew :cli:installDist      # 生成 cli/build/install/dexadapt/bin/dexadapt
 ```
+
+```bash
+dexadapt inspect app.apk                                   # 安装包档案
+dexadapt resolve --spec hooks.yaml --apk app.apk            # 按 spec 解析一个版本
+dexadapt matrix --spec hooks.yaml --apk v1.apk --apk v2.apk --parity
+dexadapt diff old.apk new.apk --spec hooks.yaml --out report/
+dexadapt suggest --apk new.apk --target 'a.b.C#m(int)void' --other old.apk
+dexadapt repair --spec hooks.yaml --old old.apk --new new.apk
+dexadapt libs app.apk --out libs/
+dexadapt export --spec hooks.yaml --out hooks.json
+dexadapt mcp                                                # MCP 服务（标准输入输出）
+```
+
+接到 Claude Code：
+
+```bash
+claude mcp add dexadapt -- /path/to/dexadapt/cli/build/install/dexadapt/bin/dexadapt mcp
+```
+
+## 在模块里用
+
+1. 用 Kotlin DSL 或 YAML 写查询（[docs/SPEC.md](docs/SPEC.md)），模块构建时引用 `dexadapt-core`；
+2. 电脑上对已知版本生成内置表（`resolve` / `matrix`），打包进模块；
+3. 宿主进程里用 `runtime` 的 `AdaptPolicy.choose` 选表、`SymbolLinker` 拿 `Method` / `Field`；
+4. 模块 App 里用 `AdaptPolicy.decide` 判断要不要扫、`DexKitScan` + `SymbolResolver` 本机适配、`AdaptPolicy.stamp` 盖身份，
+   再把表交给宿主进程热替换。
+
+红薯助手是完整的例子：`HostSymbols`、`FeatureRuntime`（宿主进程）和 `HostAdapter`（模块 App）。
+
+## 开源库识别
+
+指纹库来自 Maven 上各库的官方构件（`dexadapt libs-db` 下载、建库，随发布打包一份常用库的）。每个版本记下用到的
+“有特征的字符串”：R8 会内联、合并类，方法体整段的指纹在 App 里只剩两三成对得上，字符串即使被内联也还在。
+
+- 版本：每个版本按“它的字符串出现了多少、只有别的版本才有的字符串出现了多少”打分，分数并列的给出一段版本；
+- 类对应：库类的字符串在 App 里被哪些类用到，投票，票数明显领先才算。
+- 一些“附带”的发现：小红书 Play 版的 Google 广告 SDK 里内嵌了一份改了包名的 ExoPlayer，腾讯人脸 SDK 自带一份
+  改了包名的 OkHttp——报告的“包被改到了哪里”会列出来。
+- 局限：R8 把一个类的代码内联进调用者后，它的字符串跟着搬家，这种类会配错或配不上（基准里 4/60 配错都是这种）。
 
 ## 开发
 
-- JDK 17+ 运行 Gradle（本机用 Temurin 27），`./gradlew test`。
+- JDK 17+ 运行 Gradle，`./gradlew test`。
 - 用真实 APK 的测试读 `DEXADAPT_SAMPLES`（默认 `~/projects/xhs-apks`），没有就跳过。
 - DexKit 相关测试需要桌面原生库：`scripts/build-dexkit-desktop.sh`（需要 git、cmake、ninja、clang）。
+- 开源库指纹库：`scripts/build-libdb.sh`（下载 Maven 构件，缓存在 `~/.cache/dexadapt/maven`）。
 - 旧的 x-clean-harness 桌面验证台在 `legacy/`，微信 spec 在 `specs/wechat-legacy/`（以后再接）。

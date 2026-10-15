@@ -11,6 +11,7 @@ dependencies {
     implementation(project(":dexkit-desktop"))
     implementation(project(":diff"))
     implementation(project(":synth"))
+    implementation(project(":libs"))
     testImplementation(libs.junit)
 }
 

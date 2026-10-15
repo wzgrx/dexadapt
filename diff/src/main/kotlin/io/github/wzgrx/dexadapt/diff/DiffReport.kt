@@ -11,6 +11,8 @@ data class DiffReport(
     val pkg: PackageDiff,
     val code: CodeDiff,
     val symbols: SymbolDiff?,
+    /** 打包的开源库（新增、去掉、版本变化），由调用方用开源库识别算好填进来。 */
+    val libraries: Delta = Delta(),
 ) {
     fun markdown(limit: Int = 60): String = buildString {
         appendLine("# 升级分析：${pkg.old} → ${pkg.new}")
@@ -71,6 +73,7 @@ data class DiffReport(
         section("清单：meta-data", pkg.metaData, limit)
         section("原生库", pkg.nativeLibs, limit)
         section("另外加载的 dex（插件、热修复、加固）", pkg.extraDex, limit)
+        section("开源库", libraries, limit)
         section("网络接口（Retrofit）", code.endpoints, limit)
         section("网址与接口路径字符串", code.urls, limit)
         section("没混淆的类", code.stableClasses, limit)

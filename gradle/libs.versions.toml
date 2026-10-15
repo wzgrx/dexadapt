@@ -10,6 +10,8 @@ junit = "4.13.2"
 # APK 签名校验（和 AGP 同版本）
 apksig = "9.4.1"
 snakeyamlEngine = "3.2"
+# 读开源库官方 jar（开源库识别）
+asm = "9.9.1"
 
 [libraries]
 kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "serializationJson" }
@@ -18,6 +20,7 @@ dexkit-flatbuffers = { module = "com.google.flatbuffers:flatbuffers-java", versi
 junit = { module = "junit:junit", version.ref = "junit" }
 apksig = { module = "com.android.tools.build:apksig", version.ref = "apksig" }
 snakeyaml-engine = { module = "org.snakeyaml:snakeyaml-engine", version.ref = "snakeyamlEngine" }
+asm = { module = "org.ow2.asm:asm", version.ref = "asm" }
 
 [plugins]
 kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
