@@ -271,8 +271,22 @@ M1～M8 全部完成，第一个使用方是红薯助手（小红书），微信
 | 10.7 HTML 报告 | `matrix.html` 热力图、`report.html` 可筛选的升级报告 |
 | 11.2-7 R8 感知 | 编译器 / R8 生成的名字单独计数、重新编号抵消；成员按混淆映射换算后再比 |
 
-还没做的：Hook 框架适配层（11.2-8，YukiHookAPI / EzXHelper / KavaRef）、运行时分级回退和远程开关（10.8）、
-spec lint 和 jadx 插件（10.9）、加固 / 原生层（10.10）、新版本跟踪的一条龙自动化（10.7 的 CI 部分）。
+第 10、11 节到这里全部做完（2026-10-15 夜）：
+
+| 设计点 | 结果 |
+|---|---|
+| 11.2-8 Hook 框架适配 | `hooks` 模块：libxposed、传统 XposedBridge、YukiHookAPI、EzXHelper；KavaRef 拿 Class 后照常用 |
+| 10.8 分级回退 | `SymbolResolver.guess`：放宽一个条件或沿用旧版位置，只给有契约的点观察后用 |
+| 10.8 按需解析 | `tableInStages`：按批解析、交出部分表（红薯助手没启用，本机扫描只要几秒） |
+| 10.8 远程开关 | `RemoteSwitches`：签名的"某版本停用某功能"，App 导入、宿主进程验签 |
+| 10.9 spec lint | `SpecLint` / `dexadapt lint`：写法问题 + 对着 APK 的重复命中、契约、解析不到 |
+| 10.9 jadx 插件 | 右键类 / 方法 / 字段生成查询 |
+| 10.9 模拟器冒烟 | `scripts/emulator.sh`（环境 + 启动）、红薯助手 `scripts/smoke.sh` |
+| 10.10 原生层 | `Elf`（读 .so 导出 / 导入 / 依赖，和 readelf 一致）+ `NativeDiff`（升级报告的原生库一节） |
+| 10.10 加固 / 动态加载 | `DexKitScan.ofClassLoader` / `ofDexBytes`：从内存 dex 解析，结果和读安装包逐条相同 |
+
+整个设计（M1–M8 + 第 10、11 节）全部完成；下一步是接新宿主时的 CI 一条龙（10.7：diff → matrix → repair → PR），
+以及把微信接进来（原 x-clean-harness 的 spec 在 `specs/wechat-legacy/`）。
 
 ## 9. 风险与边界
 

@@ -39,7 +39,7 @@ Google Play 版共 4 个内置版本）。设计方案见 [docs/DESIGN.md](docs/
 | `dexkit` | DexKit 数据源和 `DexKitScan`（手机；电脑上配 `dexkit-desktop`） |
 | `dexkit-desktop` | 电脑上用 DexKit：JVM 类 + 桌面原生库加载 |
 | `runtime` | 手机运行时：`SymbolLinker`（表 → 反射对象，热替换）、`AdaptPolicy`（选表、要不要扫、本机表的身份、自检） |
-| `diff` | 升级分析：包和清单、代码、网络接口、字符串、混淆映射、模块视角、方法体相似度、Hook 风险 |
+| `diff` | 升级分析：包和清单、代码、网络接口、字符串、混淆映射、模块视角、方法体相似度、Hook 风险、原生库导出符号 |
 | `synth` | `suggest`（自动写查询）、`repair`（自动修查询） |
 | `libs` | 开源库识别：Maven 上官方构件的指纹库、版本判断、类对应 |
 | `hooks` | Hook 框架适配：libxposed、传统 Xposed API、YukiHookAPI、EzXHelper（框架 compileOnly，不打包） |
