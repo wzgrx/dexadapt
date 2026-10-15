@@ -60,6 +60,13 @@ private const val USAGE = """dexadapt <命令> [参数]
   mcp
       作为 MCP 服务运行（标准输入输出），把上面的命令提供给 Claude 这类 Agent 调用。
 
+  import --from revanced|morphe|qauxiliary [--group <组名>] <源文件.kt> [...] --out <spec.yaml>
+      别的生态的指纹（ReVanced / Morphe 的 fingerprint、QAuxiliary 的 DexKitTarget）转成 DexAdapt 查询；
+      表达不了的条件列出来。转出来的查询要用 resolve 在真实 APK 上验证。
+
+  export --spec <spec.yaml> --to revanced --out <输出.kt>
+      方法符号导出成 ReVanced 的 fingerprint { }（表达不了的条件写成注释）。
+
   export --spec <输入> --out <输出.yaml|输出.json>
       spec 转换格式（YAML ⇄ JSON）。
 
@@ -92,6 +99,7 @@ fun run(args: List<String>): Int {
         "mcp" -> { Mcp.serve(); 0 }
         "codegen" -> codegen(opts)
         "keygen" -> keygen(opts)
+        "import" -> importFingerprints(opts)
         "sign" -> sign(opts)
         "help", "-h", "--help" -> { println(USAGE); 0 }
         else -> { System.err.println("不认识的命令 $cmd\n\n$USAGE"); 1 }
@@ -377,7 +385,33 @@ private fun repair(opts: Opts): Int {
     }
 }
 
+private fun importFingerprints(opts: Opts): Int {
+    val format = when (opts.need("from")) {
+        "revanced" -> io.github.wzgrx.dexadapt.spec.Fingerprints.Format.REVANCED
+        "morphe" -> io.github.wzgrx.dexadapt.spec.Fingerprints.Format.MORPHE
+        "qauxiliary" -> io.github.wzgrx.dexadapt.spec.Fingerprints.Format.QAUXILIARY
+        else -> error("--from 只能是 revanced、morphe、qauxiliary")
+    }
+    val files = opts.positional.ifEmpty { error("缺少源文件") }.map(::File)
+    val group = opts.get("group") ?: "imported"
+    val results = files.map { io.github.wzgrx.dexadapt.spec.Fingerprints.import(it.readText(), format, group) }
+    val symbols = results.flatMap { it.symbols }.distinctBy { it.id }
+    val out = File(opts.need("out"))
+    val spec = Spec(null, io.github.wzgrx.dexadapt.Catalog(symbols))
+    out.writeText(if (out.name.endsWith(".json")) spec.toJson() + "\n" else spec.toYaml())
+    println("${symbols.size} 个指纹 → ${out.path}")
+    results.flatMap { it.notes }.forEach { println("  注意：$it") }
+    return 0
+}
+
 private fun export(opts: Opts): Int {
+    if (opts.get("to") == "revanced") {
+        val spec = Spec.read(File(opts.need("spec")))
+        val methods = spec.catalog.symbols.filterIsInstance<io.github.wzgrx.dexadapt.MethodSymbol>()
+        File(opts.need("out")).writeText(io.github.wzgrx.dexadapt.spec.Fingerprints.toRevanced(methods))
+        println("${methods.size} 个方法符号 → ${opts.need("out")}")
+        return 0
+    }
     opts.get("table")?.let { t ->
         val table = SymbolTable.fromJson(File(t).readText())
         File(opts.need("nametable")).writeText(json.encodeToString(NameTable.serializer(), NameTable.of(table)) + "\n")

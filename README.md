@@ -59,6 +59,10 @@ dexadapt suggest --apk new.apk --target 'a.b.C#m(int)void' --other old.apk
 dexadapt repair --spec hooks.yaml --old old.apk --new new.apk
 dexadapt libs app.apk --out libs/
 dexadapt export --spec hooks.yaml --out hooks.json
+dexadapt import --from revanced fingerprints.kt --out imported.yaml   # 也支持 morphe、qauxiliary
+dexadapt export --spec hooks.yaml --to revanced --out fingerprints.kt
+dexadapt codegen --spec hooks.yaml --package my.mod --out HostAccess.kt # 类型化访问器
+dexadapt keygen --out table.key && dexadapt sign --key table.key 1234-abcd.json   # 共享适配表
 dexadapt mcp                                                # MCP 服务（标准输入输出）
 ```
 

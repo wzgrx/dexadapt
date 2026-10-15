@@ -114,6 +114,19 @@ symbols:                 # 符号列表，顺序随意，引用在读入时解�
 检查契约，不跑模块的代码；满足 `minCalls` 次后放开，有一次不满足就当“未适配”。结果按表保存，同一张表只观察一次。
 内置表不观察。契约不算进目录指纹，改契约不会让各手机重扫。电脑上 `Contract.problems` 核对契约和每个内置版本的位置对得上。
 
+## 从别的生态导入
+
+`dexadapt import --from revanced|morphe|qauxiliary <源文件.kt>` 把 ReVanced / Morphe 的 fingerprint、QAuxiliary 的
+DexKitTarget 转成上面的写法（按源码写法匹配，不编译）：返回值、参数（前缀写法转成 `*`）、字符串、opcodes、访问标志里的
+static / 构造方法、custom 里的方法名和类名、Morphe 的 `string` / `literal` / `methodCall` 过滤器。
+
+- ReVanced 的 opcodes 是连续的一段，这里是“按顺序出现”，更宽；
+- 类名按后缀匹配、custom 里别的条件、QAuxiliary 的多个“或”字符串写不出来，会列出来；
+- 转出来的查询一定要 `dexadapt resolve` 在真实 APK 上验证唯一命中。
+
+反过来 `dexadapt export --spec x.yaml --to revanced` 把方法符号写成 `fingerprint { }`，写不了的条件（调用关系、
+所属类是别的符号、数字常量……）写成注释。
+
 ## 怎么写得稳
 
 1. 先找锚：数据类 `toString()` 里的 `Xxx(field=`、日志文字、埋点名、接口路径、源文件名。
