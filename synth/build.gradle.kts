@@ -1,0 +1,19 @@
+plugins {
+    alias(libs.plugins.kotlin.jvm)
+    alias(libs.plugins.kotlin.serialization)
+}
+
+dependencies {
+    api(project(":core"))
+    api(project(":dexlib"))
+    api(project(":diff"))
+    testImplementation(libs.junit)
+}
+
+tasks.test {
+    maxHeapSize = "14g"
+    testLogging { events("standard_error") }
+    val samples = System.getenv("DEXADAPT_SAMPLES").orEmpty()
+    environment("DEXADAPT_SAMPLES", samples)
+    inputs.property("samples", samples)
+}

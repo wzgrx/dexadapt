@@ -24,6 +24,8 @@ data class ApkInfo(
     val signatureSchemes: List<String>,
     /** Google Play 的 source stamp（有就说明是 Play 下发的）。 */
     val sourceStamp: Boolean,
+    /** base 里 META-INF 下的签名文件（v1 签名、Google Play 的 GOOGPLAY.*、镜像站重签留下的 BNDLTOOL.* 等）。 */
+    val signatureFiles: List<String> = emptyList(),
     val manifest: Manifest,
     val dex: List<FileEntry>,
     /** classes*.dex 以外的 dex（assets 等处，运行时另外加载的插件 / 加固壳）。 */
@@ -43,6 +45,9 @@ data class ApkInfo(
     data class NativeLib(val abi: String, val name: String, val size: Long, val crc: Long)
 
     val abis: Set<String> get() = nativeLibs.mapTo(sortedSetOf()) { it.abi }
+
+    /** Google Play 下发的包（带 Play 的签名文件或 source stamp）。 */
+    val fromPlay: Boolean get() = sourceStamp || signatureFiles.any { it.startsWith("META-INF/GOOGPLAY.") }
     val label: String get() = "$packageName $versionName ($versionCode)"
 }
 
@@ -125,6 +130,7 @@ object ApkInspector {
         val libs = ArrayList<ApkInfo.NativeLib>()
         var otherFiles = 0
         var otherBytes = 0L
+        val sigFiles = ArrayList<String>()
         for (f in set.files) ZipFile(f).use { z ->
             for (e in z.entries()) {
                 if (e.isDirectory) continue
@@ -136,7 +142,7 @@ object ApkInspector {
                         val parts = n.split('/')
                         if (parts.size >= 3) libs += ApkInfo.NativeLib(parts[1], parts.drop(2).joinToString("/"), e.size, e.crc)
                     }
-                    n.startsWith("META-INF/") -> {}
+                    n.startsWith("META-INF/") -> if (f == base && n.matches(Regex("META-INF/[^/]+\\.(RSA|DSA|EC|SF)"))) sigFiles += n
                     else -> { otherFiles++; otherBytes += e.size }
                 }
             }
@@ -164,6 +170,7 @@ object ApkInspector {
             verified = sig?.isVerified == true,
             signatureSchemes = schemes,
             sourceStamp = sig?.sourceStampInfo != null,
+            signatureFiles = sigFiles.sorted(),
             manifest = Manifest.of(root),
             dex = dex.sortedWith(compareBy({ it.name.length }, { it.name })),
             extraDex = extraDex,

@@ -5,5 +5,6 @@ plugins {
 
 dependencies {
     api(libs.kotlinx.serialization.json)
+    implementation(libs.snakeyaml.engine)
     testImplementation(libs.junit)
 }
