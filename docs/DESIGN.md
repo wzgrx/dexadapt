@@ -258,9 +258,21 @@ M1～M8 全部完成，第一个使用方是红薯助手（小红书），微信
 | M7 | 19 个常用库的指纹库；小红书认出 12 个库及版本；R8 混淆的 OkHttp 3.14.9 版本认对、类对应 56/60 |
 | M8 | `dexadapt mcp`：8 个工具（inspect、resolve、matrix、diff、suggest、repair、libs、export） |
 
-第 10、11 节里还没做的（按价值）：Hook 契约和观察模式（10.1）、类型安全访问器的代码生成（10.5）、共享适配表（10.6）、
-APK 索引记录文件（11.2 第 4 点，矩阵和 diff 更快）、ReVanced / QAuxiliary 指纹导入（11.2 第 1 点）、
-`DexKitCacheBridge`（11.2 第 6 点，API 还在变）、HTML 报告、R8 感知的 diff（11.2 第 7 点）。
+第 10、11 节随后做完的（2026-10-15 晚）：
+
+| 设计点 | 结果 |
+|---|---|
+| 10.1 Hook 契约和观察模式 | `Contract` / `ContractMonitor`；本机适配的表上带契约的 Hook 点先观察，通过才生效；红薯助手首批 3 个契约 |
+| 10.5 类型化访问器 | `dexadapt codegen` / `Accessors`；红薯助手按名字读的 15 个笔记字段纳入目录，生成 `HostAccess`（527 个符号） |
+| 10.6 共享适配表 | `TableSignature`（ECDSA P-256）+ `SharedTables`；红薯助手先下载、验签、核对，再本机扫描；`publish` 用 App 的公钥自检 |
+| 11.2-4 APK 索引记录 | `IndexCache`：小红书解析 40 秒 → 读记录 6 秒，生成的表逐字节不变 |
+| 11.2-1 指纹导入导出 | ReVanced 新旧写法、Morphe、QAuxiliary → DexAdapt；DexAdapt → ReVanced |
+| 11.2-6 DexKitCacheBridge | `RecyclableScan`：连续扫描复用桥（第二次 3.0 → 1.2 秒），出问题退回 `DexKitScan` |
+| 10.7 HTML 报告 | `matrix.html` 热力图、`report.html` 可筛选的升级报告 |
+| 11.2-7 R8 感知 | 编译器 / R8 生成的名字单独计数、重新编号抵消；成员按混淆映射换算后再比 |
+
+还没做的：Hook 框架适配层（11.2-8，YukiHookAPI / EzXHelper / KavaRef）、运行时分级回退和远程开关（10.8）、
+spec lint 和 jadx 插件（10.9）、加固 / 原生层（10.10）、新版本跟踪的一条龙自动化（10.7 的 CI 部分）。
 
 ## 9. 风险与边界
 
