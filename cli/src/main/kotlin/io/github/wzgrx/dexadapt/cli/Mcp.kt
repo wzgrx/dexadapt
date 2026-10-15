@@ -90,6 +90,15 @@ object Mcp {
             positional = listOf("apk"), report = "libs.md", defaultOut = "dexadapt-libs",
         ),
         Tool(
+            "decompile", "用 jadx 反编译指定的类或整个包，返回 Java 源码（写 Hook、确认类的用途时看）。类名用安装包里的原始名字；整包很大时给 out 目录。",
+            listOf(
+                Param("apk", "string", "安装包", true), Param("class", "array", "类名（可多个）"), Param("package", "array", "包名前缀（可多个）"),
+                Param("string", "array", "按方法里用到的字符串找类（包含即可）"),
+                Param("out", "string", "输出目录（不给时直接返回源码）"), Param("limit", "string", "最多几个类（默认 200）"),
+            ),
+            positional = listOf("apk"),
+        ),
+        Tool(
             "lint", "检查 spec 的写法（引用、成环、只靠形状、按混淆名找、手机上要全量扫描的查询）；给了安装包再查同组重复命中、契约、解析不到。",
             listOf(Param("spec", "string", "spec 文件", true), Param("apk", "array", "安装包（可多个）")),
         ),

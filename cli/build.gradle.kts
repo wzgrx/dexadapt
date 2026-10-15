@@ -13,6 +13,9 @@ dependencies {
     implementation(project(":synth"))
     implementation(project(":libs"))
     implementation(project(":runtime"))
+    // decompile 命令：用 jadx 批量反编译（加载一次 APK，反编译多个类 / 整个包）
+    implementation(libs.jadx.core)
+    implementation(libs.jadx.dex.input)
     testImplementation(libs.junit)
 }
 
