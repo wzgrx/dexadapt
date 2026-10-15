@@ -1,13 +1,14 @@
-# 第三方源码克隆（按 README 复现）
-third_party/DexKit/
-
-# 第三方二进制（按 README 复现）
-libs/
-
-# 微信 APK 样本（大文件，不入库）
-apks/
-
-# 构建与运行产物
-runner/build/
-runner/.gradle/
+# 构建产物
+build/
+.gradle/
+.kotlin/
 *.log
+local.properties
+.idea/
+*.iml
+
+# APK 样本（大文件，不入库；来源和签名记在各目录的 PROVENANCE.txt）
+apks/*/
+# 旧版验证台的第三方源码和二进制
+third_party/
+libs/

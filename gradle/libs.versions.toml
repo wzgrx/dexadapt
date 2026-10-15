@@ -1,0 +1,19 @@
+[versions]
+kotlin = "2.4.21"
+serializationJson = "1.11.0"
+dexlib2 = "3.0.10"
+# DexKit：手机上本机适配和电脑上的一致性校验用同一个版本。
+dexkit = "2.3.0"
+# DexKit AAR 的 POM 依赖的 FlatBuffers（电脑上单独加；升级 DexKit 时一起核对）。
+dexkitFlatbuffers = "23.5.26"
+junit = "4.13.2"
+
+[libraries]
+kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "serializationJson" }
+dexlib2 = { module = "com.android.tools.smali:smali-dexlib2", version.ref = "dexlib2" }
+dexkit-flatbuffers = { module = "com.google.flatbuffers:flatbuffers-java", version.ref = "dexkitFlatbuffers" }
+junit = { module = "junit:junit", version.ref = "junit" }
+
+[plugins]
+kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
+kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
