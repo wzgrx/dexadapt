@@ -18,3 +18,4 @@ rootProject.name = "dexadapt"
 include(":core")
 include(":dexlib")
 include(":dexkit")
+include(":dexkit-desktop")
