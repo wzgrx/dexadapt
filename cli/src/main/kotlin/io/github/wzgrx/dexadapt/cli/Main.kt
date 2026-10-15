@@ -52,9 +52,10 @@ private const val USAGE = """dexadapt <命令> [参数]
       检查 spec 的写法：引用、成环、只靠形状、按混淆名找、手机上要全量扫描的查询、重复的查询；给了安装包再查
       两个符号命中同一个成员、契约对不上、解析不到。有错误时退出码 3。
 
-  decompile <安装包> (--class <类名> ... | --package <包名前缀> ... | --string <字符串> ...) [--out <目录>] [--limit <个数>]
+  decompile <安装包> (--class <类名> ... | --package <包名前缀> ... | --string <字符串> ... | --calls <方法> ...) [--out <目录>] [--limit <个数>]
       用 jadx 反编译指定的类或整个包（加载一次安装包，批量输出 Java 源码；写 Hook、确认类的用途时看）。
-      --string 按方法里用到的字符串找类（包含即可，例如一条日志、一个埋点名、一个配置键）。
+      --string 按方法里用到的字符串找类（包含即可，例如一条日志、一个埋点名、一个配置键）；
+      --calls 按调用了哪个方法找类（写成 类#方法，包含即可，例如 VideoCommentTimestampView#f）。
       不给 --out 时直接打印（只适合少量类）。类名用安装包里的原始名字。
 
   codegen --spec <spec.yaml> --package <包名> [--class <类名>] --out <输出.kt>
@@ -281,14 +282,17 @@ private fun decompile(opts: Opts): Int {
     val apk = File(opts.positional.firstOrNull() ?: error("缺少安装包路径"))
     val packages = opts.all("package")
     val strings = opts.all("string")
-    // 按字符串找：用索引（有记录时几秒）找出方法里用到它的类
-    val byString = if (strings.isEmpty()) emptyList() else {
-        val index = io.github.wzgrx.dexadapt.dexlib.DexIndex.load(apk)
-        strings.flatMap { s ->
-            val owners = index.methodsByString.entries.asSequence().filter { (k, _) -> s in k }.flatMap { (_, ms) -> ms.asSequence() }.map { it.owner }.toSortedSet()
-            System.err.println("“$s”：${owners.size} 个类" + if (owners.isNotEmpty()) "（${owners.take(8).joinToString()}${if (owners.size > 8) " …" else ""}）" else "")
-            owners
-        }
+    val callTargets = opts.all("calls")
+    // 按字符串、按调用找：用索引（有记录时几秒）找出方法里用到它的类
+    val index by lazy { io.github.wzgrx.dexadapt.dexlib.DexIndex.load(apk) }
+    fun report(label: String, owners: Set<String>) =
+        System.err.println("$label：${owners.size} 个类" + if (owners.isNotEmpty()) "（${owners.take(8).joinToString()}${if (owners.size > 8) " …" else ""}）" else "")
+    val byString = strings.flatMap { s ->
+        index.methodsByString.entries.asSequence().filter { (k, _) -> s in k }.flatMap { (_, ms) -> ms.asSequence() }.map { it.owner }.toSortedSet()
+            .also { report("“$s”", it) }
+    } + callTargets.flatMap { c ->
+        index.classes.values.asSequence().filter { cls -> cls.methods.any { m -> m.calls.any { c in it } } }.map { it.name }.toSortedSet()
+            .also { report("调用 $c", it) }
     }
     val classes = opts.all("class") + byString
     require(classes.isNotEmpty() || packages.isNotEmpty()) { "至少给一个 --class、--package 或能找到类的 --string" }

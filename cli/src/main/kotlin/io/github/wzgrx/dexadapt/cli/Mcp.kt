@@ -94,6 +94,7 @@ object Mcp {
             listOf(
                 Param("apk", "string", "安装包", true), Param("class", "array", "类名（可多个）"), Param("package", "array", "包名前缀（可多个）"),
                 Param("string", "array", "按方法里用到的字符串找类（包含即可）"),
+                Param("calls", "array", "按调用了哪个方法找类（类#方法，包含即可）"),
                 Param("out", "string", "输出目录（不给时直接返回源码）"), Param("limit", "string", "最多几个类（默认 200）"),
             ),
             positional = listOf("apk"),
