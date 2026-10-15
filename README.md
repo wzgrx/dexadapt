@@ -42,6 +42,7 @@ Google Play 版共 4 个内置版本）。设计方案见 [docs/DESIGN.md](docs/
 | `diff` | 升级分析：包和清单、代码、网络接口、字符串、混淆映射、模块视角、方法体相似度、Hook 风险 |
 | `synth` | `suggest`（自动写查询）、`repair`（自动修查询） |
 | `libs` | 开源库识别：Maven 上官方构件的指纹库、版本判断、类对应 |
+| `hooks` | Hook 框架适配：libxposed、传统 Xposed API、YukiHookAPI、EzXHelper（框架 compileOnly，不打包） |
 | `cli` | 命令行和 MCP 服务 |
 
 ## 命令行
@@ -79,6 +80,17 @@ claude mcp add dexadapt -- /path/to/dexadapt/cli/build/install/dexadapt/bin/dexa
 3. 宿主进程里用 `runtime` 的 `AdaptPolicy.choose` 选表、`SymbolLinker` 拿 `Method` / `Field`；
 4. 模块 App 里用 `AdaptPolicy.decide` 判断要不要扫、`DexKitScan` + `SymbolResolver` 本机适配、`AdaptPolicy.stamp` 盖身份，
    再把表交给宿主进程热替换。
+
+已经用了某个 Hook 框架的模块不用改写法，用 `hooks` 模块的适配（成员按符号表找、找不到不挂、观察模式自动接上）：
+
+```kotlin
+val hooks = SymbolHooks(linker, contracts = { monitor })                       // runtime 模块
+xposed.hook(hooks, MySymbols.bind) { chain -> chain.proceed() }               // libxposed
+hooks.hookMethod(MySymbols.bind, after = { param -> param.result = null })     // 传统 XposedBridge
+hookSymbol(hooks, MySymbols.bind) { after { result = null } }                 // YukiHookAPI，写在 loadApp { } 里
+hooks.createHook(MySymbols.bind) { before { param -> } }                      // EzXHelper
+linker.clazz(MySymbols.feed).resolve().firstField { name = "poi" }            // KavaRef：拿到 Class 后照常用
+```
 
 红薯助手是完整的例子：`HostSymbols`、`FeatureRuntime`（宿主进程）和 `HostAdapter`（模块 App）。
 
