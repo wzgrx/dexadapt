@@ -48,6 +48,9 @@ private const val USAGE = """dexadapt <命令> [参数]
   libs-db --out <指纹库.json.gz> [--lib <group:artifact=显示名> ...] [--add-to <已有指纹库>]
       从 Maven 仓库下载开源库的各个版本，建指纹库。不给 --lib 时收录内置的常用库列表。
 
+  codegen --spec <spec.yaml> --package <包名> [--class <类名>] --out <输出.kt>
+      生成类型化访问器（Kotlin）：access.<组>.<成员>(...)，代替按名字反射；找不到的符号抛 SymbolUnavailable。
+
   mcp
       作为 MCP 服务运行（标准输入输出），把上面的命令提供给 Claude 这类 Agent 调用。
 
@@ -81,6 +84,7 @@ fun run(args: List<String>): Int {
         "libs" -> libs(opts)
         "libs-db" -> libsDb(opts)
         "mcp" -> { Mcp.serve(); 0 }
+        "codegen" -> codegen(opts)
         "help", "-h", "--help" -> { println(USAGE); 0 }
         else -> { System.err.println("不认识的命令 $cmd\n\n$USAGE"); 1 }
     }
@@ -212,6 +216,15 @@ private fun diff(opts: Opts): Int {
             println("输出在 ${out.path}/（report.md、report.json、mapping.txt）")
         }
     }
+    return 0
+}
+
+private fun codegen(opts: Opts): Int {
+    val spec = Spec.read(File(opts.need("spec")))
+    val options = io.github.wzgrx.dexadapt.codegen.Accessors.Options(opts.need("package"), opts.get("class") ?: "HostAccess")
+    val out = File(opts.need("out")).apply { absoluteFile.parentFile?.mkdirs() }
+    out.writeText(io.github.wzgrx.dexadapt.codegen.Accessors.kotlin(spec.catalog, options))
+    println("${spec.catalog.symbols.size} 个符号 → ${out.path}")
     return 0
 }
 
