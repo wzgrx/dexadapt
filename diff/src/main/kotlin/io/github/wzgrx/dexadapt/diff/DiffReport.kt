@@ -13,6 +13,8 @@ data class DiffReport(
     val symbols: SymbolDiff?,
     /** 打包的开源库（新增、去掉、版本变化），由调用方用开源库识别算好填进来。 */
     val libraries: Delta = Delta(),
+    /** 原生库的导出符号和依赖变化（[NativeDiff]），每行一个库。 */
+    val nativeSymbols: Delta = Delta(),
 ) {
     fun markdown(limit: Int = 60): String = buildString {
         appendLine("# 升级分析：${pkg.old} → ${pkg.new}")
@@ -78,6 +80,7 @@ data class DiffReport(
         section("原生库", pkg.nativeLibs, limit)
         section("另外加载的 dex（插件、热修复、加固）", pkg.extraDex, limit)
         section("开源库", libraries, limit)
+        section("原生库的导出符号和依赖", nativeSymbols, limit)
         section("网络接口（Retrofit）", code.endpoints, limit)
         section("网址与接口路径字符串", code.urls, limit)
         section("没混淆的类", code.stableClasses, limit)
@@ -163,7 +166,7 @@ data class DiffReport(
                 )
             }
             val sections = listOf(
-                "开源库" to libraries, "原生库" to pkg.nativeLibs, "清单：申请的权限" to pkg.usesPermissions, "清单：自定义权限" to pkg.permissions,
+                "开源库" to libraries, "原生库" to pkg.nativeLibs, "原生库的导出符号和依赖" to nativeSymbols, "清单：申请的权限" to pkg.usesPermissions, "清单：自定义权限" to pkg.permissions,
                 "清单：组件" to pkg.components, "清单：外部唤起的链接" to pkg.deepLinks, "清单：meta-data" to pkg.metaData,
                 "另外加载的 dex" to pkg.extraDex, "网络接口（Retrofit）" to code.endpoints, "网址与接口路径字符串" to code.urls,
                 "没混淆的类" to code.stableClasses, "没混淆的类的成员" to code.stableMembers, "其它新增 / 删除的字符串" to code.strings,

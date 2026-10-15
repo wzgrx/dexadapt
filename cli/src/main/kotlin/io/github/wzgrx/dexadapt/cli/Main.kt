@@ -228,6 +228,8 @@ private fun diff(opts: Opts): Int {
             } ?: io.github.wzgrx.dexadapt.diff.Delta()
             val report = io.github.wzgrx.dexadapt.diff.DiffReport(
                 io.github.wzgrx.dexadapt.diff.PackageDiff.of(a.info, b.info), io.github.wzgrx.dexadapt.diff.CodeDiff.of(ia, ib, mapping), symbols, libraries,
+                nativeSymbols = runCatching { io.github.wzgrx.dexadapt.diff.NativeDiff.of(ApkSet.open(oldPath).files, ApkSet.open(newPath).files) }
+                    .onFailure { System.err.println("原生库比较失败：${it.message}") }.getOrDefault(io.github.wzgrx.dexadapt.diff.Delta()),
             )
             File(out, "report.md").writeText(report.markdown())
             File(out, "report.html").writeText(report.html())

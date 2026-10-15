@@ -8,3 +8,7 @@ dependencies {
     implementation(libs.apksig)
     testImplementation(libs.junit)
 }
+
+tasks.test {
+    testLogging { events("standard_error") }
+}
