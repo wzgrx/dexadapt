@@ -10,6 +10,7 @@ dependencies {
     implementation(project(":dexlib"))
     implementation(project(":dexkit-desktop"))
     implementation(project(":diff"))
+    implementation(project(":synth"))
     testImplementation(libs.junit)
 }
 

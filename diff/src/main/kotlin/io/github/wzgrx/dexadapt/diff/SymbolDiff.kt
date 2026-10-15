@@ -2,6 +2,9 @@ package io.github.wzgrx.dexadapt.diff
 
 import io.github.wzgrx.dexadapt.Resolved
 import io.github.wzgrx.dexadapt.SymbolTable
+import io.github.wzgrx.dexadapt.dexlib.DexIndex
+import io.github.wzgrx.dexadapt.resolve.AccessFlag
+import io.github.wzgrx.dexadapt.resolve.MethodView
 import kotlinx.serialization.Serializable
 
 /**
@@ -20,6 +23,10 @@ data class SymbolDiff(val rows: List<Row>) {
         val reason: String? = null,
         /** 新版失败时，按混淆映射推测的位置。 */
         val guess: String? = null,
+        /** 方法：新旧方法体（指令序列）的相似度，0～1；低说明“找到了但逻辑可能变了”，要复核 Hook 的写法。 */
+        val bodySimilarity: Double? = null,
+        /** 方法：Hook 可能不生效的风险（太小可能被 ART 内联、抽象方法……）。 */
+        val hookRisk: String? = null,
     )
 
     enum class Status {
@@ -38,19 +45,38 @@ data class SymbolDiff(val rows: List<Row>) {
     val counts: Map<Status, Int> get() = rows.groupingBy { it.status }.eachCount()
 
     companion object {
-        fun of(old: SymbolTable, new: SymbolTable, mapping: ClassMatcher.Result?): SymbolDiff {
+        fun of(old: SymbolTable, new: SymbolTable, mapping: ClassMatcher.Result?, oldIndex: DexIndex? = null, newIndex: DexIndex? = null): SymbolDiff {
+            val callers = newIndex?.let { idx -> callerCounts(idx, new.entries.values.filterIsInstance<Resolved.Method>().map(::text).toSet()) }.orEmpty()
             val ids = (old.entries.keys + old.missing.keys + new.entries.keys + new.missing.keys).toSortedSet()
             val methodMap = mapping?.methods?.associate { it.old to it.new }.orEmpty()
             return SymbolDiff(ids.map { id ->
                 val a = old.entries[id]
                 val b = new.entries[id]
                 when {
-                    a != null && b != null -> Row(id, if (a == b) Status.SAME else Status.MOVED, text(a), text(b))
+                    a != null && b != null -> {
+                        val ma = (a as? Resolved.Method)?.let { method(oldIndex, it) }
+                        val mb = (b as? Resolved.Method)?.let { method(newIndex, it) }
+                        Row(
+                            id, if (a == b) Status.SAME else Status.MOVED, text(a), text(b),
+                            bodySimilarity = if (ma != null && mb != null) BodySimilarity.of(ma.opcodes, mb.opcodes) else null,
+                            hookRisk = mb?.let { HookRisk.of(it, callers[text(b)] ?: 0) },
+                        )
+                    }
                     a != null -> Row(id, Status.LOST, text(a), null, new.missing[id], mapping?.let { guess(a, it.byOld, methodMap) })
                     b != null -> Row(id, Status.GAINED, null, text(b))
                     else -> Row(id, Status.ABSENT, null, null, new.missing[id])
                 }
             })
+        }
+
+        private fun method(index: DexIndex?, r: Resolved.Method) =
+            index?.classes?.get(r.owner)?.methods?.firstOrNull { it.name == r.name && it.params == r.params && it.returns == r.returns }
+
+        /** [targets]（方法签名）各被多少个方法调用。 */
+        private fun callerCounts(index: DexIndex, targets: Set<String>): Map<String, Int> {
+            val counts = HashMap<String, Int>()
+            for (c in index.classes.values) for (m in c.methods) for (call in m.calls) if (call in targets) counts.merge(call, 1, Int::plus)
+            return counts
         }
 
         fun text(r: Resolved): String = when (r) {
@@ -88,5 +114,43 @@ object MappingWriter {
                 appendLine("    $ret $oldName($params) -> $newName")
             }
         }
+    }
+}
+
+/** 两段指令序列的相似度（0～1）：短的用最长公共子序列，长的用操作码直方图。 */
+object BodySimilarity {
+    fun of(a: List<String>, b: List<String>): Double {
+        if (a.isEmpty() && b.isEmpty()) return 1.0
+        if (a.isEmpty() || b.isEmpty()) return 0.0
+        if (a.size.toLong() * b.size > 4_000_000) {
+            val ha = a.groupingBy { it }.eachCount()
+            val hb = b.groupingBy { it }.eachCount()
+            val inter = (ha.keys + hb.keys).sumOf { minOf(ha[it] ?: 0, hb[it] ?: 0) }
+            return 2.0 * inter / (a.size + b.size)
+        }
+        var prev = IntArray(b.size + 1)
+        var cur = IntArray(b.size + 1)
+        for (i in 1..a.size) {
+            for (j in 1..b.size) cur[j] = if (a[i - 1] == b[j - 1]) prev[j - 1] + 1 else maxOf(prev[j], cur[j - 1])
+            val t = prev; prev = cur; cur = t
+        }
+        return 2.0 * prev[b.size] / (a.size + b.size)
+    }
+}
+
+/**
+ * Hook 可能不生效的风险。LSPosed 一类框架改的是方法入口；ART 编译时把很小的方法内联进调用者，调用者里就不再走入口，
+ * Hook 不触发（可以改 Hook 调用者，或让框架对调用者反优化）。抽象方法、native 方法同理要换目标。
+ */
+object HookRisk {
+    /** 指令数在这以内的方法，ART 很可能内联（ART 的内联上限按代码单元算，十几条指令就在范围里）。 */
+    const val SMALL = 10
+
+    fun of(m: MethodView, callers: Int): String? = when {
+        m.flags and AccessFlag.ABSTRACT != 0 -> "抽象方法（接口或抽象类）：只调用它没关系；要 Hook 的话得 Hook 实现类"
+        m.flags and 0x100 != 0 -> "native 方法：Java 层没有方法体，Hook 只拦得到 Java 侧的调用"
+        m.opcodes.size <= SMALL && m.name != "<init>" ->
+            "方法体只有 ${m.opcodes.size} 条指令${if (callers == 1) "、只有 1 个调用者" else ""}，可能被 ART 内联导致 Hook 不触发"
+        else -> null
     }
 }

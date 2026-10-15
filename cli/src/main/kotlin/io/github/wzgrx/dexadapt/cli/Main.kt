@@ -33,6 +33,14 @@ private const val USAGE = """dexadapt <命令> [参数]
       给了 spec 时再列出模块的每个符号旧位置 → 新位置，新版找不到的按映射推测新位置。
       输出 report.md、report.json、mapping.txt（ProGuard 格式，jadx 打开新版时加载，混淆名显示成旧版的名字）。
 
+  suggest --apk <安装包> --target <类名 | 类#方法(参数)返回 | 类#字段> [--other <安装包> ...] [--id <符号 id>]
+      给一个目标自动写查询：挑出能让它唯一、最稳的特征组合（稀有字符串、源文件名、字段名、注解、稳定 API 调用、形状），
+      要求在 --other 给的别的版本里也唯一命中。输出 YAML。
+
+  repair --spec <spec.yaml> --old <旧安装包> --new <新安装包> [--id <符号 id> ...]
+      新版找不到的符号：诊断是哪个条件不满足，给出修好的查询（逐个放宽条件，或按混淆映射找到新位置重新生成），
+      每条都在新旧两版验证过。不给 --id 时修全部找不到的。
+
   export --spec <输入> --out <输出.yaml|输出.json>
       spec 转换格式（YAML ⇄ JSON）。
 
@@ -58,6 +66,8 @@ fun run(args: List<String>): Int {
         "matrix" -> matrix(opts)
         "export" -> export(opts)
         "diff" -> diff(opts)
+        "suggest" -> suggest(opts)
+        "repair" -> repair(opts)
         "help", "-h", "--help" -> { println(USAGE); 0 }
         else -> { System.err.println("不认识的命令 $cmd\n\n$USAGE"); 1 }
     }
@@ -171,7 +181,7 @@ private fun diff(opts: Opts): Int {
             val symbols = spec?.let { s ->
                 val ta = SymbolResolver.forBuild(ia, a.info.versionCode, opts.get("old-build")).table(s.catalog.symbols)
                 val tb = SymbolResolver.forBuild(ib, b.info.versionCode, opts.get("new-build")).table(s.catalog.symbols)
-                io.github.wzgrx.dexadapt.diff.SymbolDiff.of(ta, tb, mapping)
+                io.github.wzgrx.dexadapt.diff.SymbolDiff.of(ta, tb, mapping, ia, ib)
             }
             val report = io.github.wzgrx.dexadapt.diff.DiffReport(
                 io.github.wzgrx.dexadapt.diff.PackageDiff.of(a.info, b.info), io.github.wzgrx.dexadapt.diff.CodeDiff.of(ia, ib, mapping), symbols,
@@ -186,6 +196,69 @@ private fun diff(opts: Opts): Int {
         }
     }
     return 0
+}
+
+/** `类名`、`类#方法(参数)返回`、`类#字段`（字段类型从安装包里读）。 */
+private fun target(text: String, source: io.github.wzgrx.dexadapt.resolve.SymbolSource): io.github.wzgrx.dexadapt.Resolved {
+    if ('#' !in text) return io.github.wzgrx.dexadapt.Resolved.Class(text)
+    val owner = text.substringBefore('#')
+    val rest = text.substringAfter('#')
+    if ('(' in rest) {
+        val name = rest.substringBefore('(')
+        val params = rest.substringAfter('(').substringBefore(')').split(',').map { it.trim() }.filter { it.isNotEmpty() }
+        val ret = rest.substringAfterLast(')').ifEmpty {
+            source.classByName(owner)?.methods?.firstOrNull { it.name == name && it.params == params }?.returns ?: error("$text 不在安装包里")
+        }
+        return io.github.wzgrx.dexadapt.Resolved.Method(owner, name, params, ret)
+    }
+    val f = source.classByName(owner)?.fields?.firstOrNull { it.name == rest } ?: error("$text 不在安装包里")
+    return io.github.wzgrx.dexadapt.Resolved.Field(owner, f.name, f.type)
+}
+
+private fun suggest(opts: Opts): Int {
+    Engines.open(File(opts.need("apk")), Engine.DEXLIB).use { main ->
+        val others = opts.all("other").map { Engines.open(File(it), Engine.DEXLIB) }
+        try {
+            val t = target(opts.need("target"), main.source)
+            val s = io.github.wzgrx.dexadapt.synth.Suggester(main.source, others.map { it.source }).suggest(t, opts.get("id") ?: "suggested")
+            println("# ${s.why}")
+            if (s.query == null) return 3
+            print(Spec(null, io.github.wzgrx.dexadapt.Catalog(s.extra + listOfNotNull(s.query))).toYaml())
+            return 0
+        } finally {
+            others.forEach { it.close() }
+        }
+    }
+}
+
+private fun repair(opts: Opts): Int {
+    val spec = Spec.read(File(opts.need("spec")))
+    Engines.open(File(opts.need("old")), Engine.DEXLIB).use { a ->
+        Engines.open(File(opts.need("new")), Engine.DEXLIB).use { b ->
+            val tb = SymbolResolver(b.source, b.info.versionCode).table(spec.catalog.symbols)
+            val wanted = opts.all("id").toSet()
+            val broken = spec.catalog.symbols.filter { it.id in tb.missing && (wanted.isEmpty() || it.id in wanted) }
+            if (broken.isEmpty()) { println("新版里 spec 的符号都能解析，不用修"); return 0 }
+            val ia = a.source as? io.github.wzgrx.dexadapt.dexlib.DexIndex
+            val ib = b.source as? io.github.wzgrx.dexadapt.dexlib.DexIndex
+            // 有映射时用它推测新位置（放宽条件修不好的靠它）。
+            val mapping = if (ia != null && ib != null) io.github.wzgrx.dexadapt.diff.ClassMatcher(ia, ib).run() else null
+            val ta = SymbolResolver(a.source, a.info.versionCode).table(spec.catalog.symbols)
+            val diff = mapping?.let { io.github.wzgrx.dexadapt.diff.SymbolDiff.of(ta, tb, it) }
+            val repair = io.github.wzgrx.dexadapt.synth.Repair(a.source, b.source)
+            var fixed = 0
+            for (s in broken) {
+                val guessText = diff?.rows?.firstOrNull { it.id == s.id }?.guess
+                val guess = guessText?.takeIf { '?' !in it }?.let { runCatching { target(it, b.source) }.getOrNull() }
+                val fix = repair.repair(s, guess)
+                println("## ${s.id}\n诊断：${fix.diagnosis}\n处理：${fix.action}" + (fix.newLocation?.let { "\n新位置：$it" } ?: ""))
+                fix.yaml?.let { println(it); fixed++ }
+                println()
+            }
+            println("找不到 ${broken.size} 个，给出修复 $fixed 个")
+            return if (fixed == broken.size) 0 else 3
+        }
+    }
 }
 
 private fun export(opts: Opts): Int {

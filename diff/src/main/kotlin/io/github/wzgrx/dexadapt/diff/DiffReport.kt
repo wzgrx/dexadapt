@@ -2,6 +2,9 @@ package io.github.wzgrx.dexadapt.diff
 
 import kotlinx.serialization.Serializable
 
+/** 方法体相似度低于这个就提醒复核。 */
+private const val BODY_WARN = 0.6
+
 /** 一次升级分析的全部结果（可以序列化成 JSON，也能出 Markdown）。 */
 @Serializable
 data class DiffReport(
@@ -36,6 +39,27 @@ data class DiffReport(
                 appendLine("| 符号 | 旧版位置 | 失败原因 | 按映射推测的新位置 |")
                 appendLine("|---|---|---|---|")
                 lost.forEach { r -> appendLine("| `${r.id}` | `${r.old}` | ${cell(r.reason)} | ${r.guess?.let { "`$it`" } ?: "—"} |") }
+                appendLine()
+            }
+        }
+
+        symbols?.let { s ->
+            val changed = s.rows.filter { (it.bodySimilarity ?: 1.0) < BODY_WARN }.sortedBy { it.bodySimilarity }
+            if (changed.isNotEmpty()) {
+                appendLine("## 模块：找到了，但方法体变化大（复核 Hook 的写法）")
+                appendLine()
+                appendLine("| 符号 | 新版位置 | 方法体相似度 |")
+                appendLine("|---|---|---|")
+                changed.forEach { r -> appendLine("| `${r.id}` | `${r.new}` | ${"%.0f%%".format((r.bodySimilarity ?: 0.0) * 100)} |") }
+                appendLine()
+            }
+            val risky = s.rows.filter { it.hookRisk != null }
+            if (risky.isNotEmpty()) {
+                appendLine("## 模块：Hook 可能不生效的点")
+                appendLine()
+                appendLine("| 符号 | 新版位置 | 风险 |")
+                appendLine("|---|---|---|")
+                risky.forEach { r -> appendLine("| `${r.id}` | `${r.new}` | ${r.hookRisk} |") }
                 appendLine()
             }
         }
