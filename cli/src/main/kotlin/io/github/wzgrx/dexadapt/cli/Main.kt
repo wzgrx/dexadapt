@@ -195,8 +195,9 @@ private fun matrix(opts: Opts): Int {
     }
     File(out, "margin.json").writeText(MarginReport.of(spec.catalog.fingerprint(), margins).toJson() + "\n")
     File(out, "matrix.md").writeText(Matrix.render(tables, margins, regenerate = "由 `dexadapt matrix` 生成。"))
+    File(out, "matrix.html").writeText(Matrix.html(tables, margins))
     parity.forEach(::println)
-    println("输出在 ${out.path}/（tables/、margin.json、matrix.md）")
+    println("输出在 ${out.path}/（tables/、margin.json、matrix.md、matrix.html）")
     return if (failed) 3 else 0
 }
 
@@ -224,12 +225,13 @@ private fun diff(opts: Opts): Int {
                 io.github.wzgrx.dexadapt.diff.PackageDiff.of(a.info, b.info), io.github.wzgrx.dexadapt.diff.CodeDiff.of(ia, ib, mapping), symbols, libraries,
             )
             File(out, "report.md").writeText(report.markdown())
+            File(out, "report.html").writeText(report.html())
             File(out, "report.json").writeText(json.encodeToString(io.github.wzgrx.dexadapt.diff.DiffReport.serializer(), report) + "\n")
             File(out, "mapping.txt").writeText(io.github.wzgrx.dexadapt.diff.MappingWriter.proguard(mapping))
             val m = report.code.mapping
             println("配上 ${m.matched}/${m.oldClasses} 个类、${m.methods} 对方法（${(System.currentTimeMillis() - started) / 1000} 秒）")
             symbols?.counts?.let { println("模块符号：" + it.entries.joinToString("，") { (k, v) -> "$k $v" }) }
-            println("输出在 ${out.path}/（report.md、report.json、mapping.txt）")
+            println("输出在 ${out.path}/（report.md、report.html、report.json、mapping.txt）")
         }
     }
     return 0

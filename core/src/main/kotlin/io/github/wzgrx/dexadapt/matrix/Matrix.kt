@@ -110,6 +110,82 @@ object Matrix {
         appendLine("共 ${ids.size} 个符号。")
     }
 
+    /**
+     * 同样的数据画成热力图（HTML，自包含）：行是符号、列是构建；绿色和同渠道上一版位置相同，黄色是改了名（查询跟上了），
+     * 红色是解析不到，灰色是这个构建没有；⚠ 是单点依赖。可以搜索、按“漂移 / 缺失 / 单点”筛选、点表头排序。
+     */
+    fun html(
+        tables: Map<Build, SymbolTable>,
+        margins: Map<Long, List<SymbolMargin>>,
+        channelOrder: List<String> = emptyList(),
+        title: String = "版本矩阵",
+    ): String {
+        fun rank(c: String) = channelOrder.indexOf(c).let { if (it < 0) Int.MAX_VALUE else it }
+        val builds = tables.keys.sortedWith(compareBy<Build>({ rank(it.channel) }, { it.channel }).thenBy { it.versionCode })
+        val ids = tables.values.flatMap { it.entries.keys + it.missing.keys }.toSortedSet()
+        val prev = builds.associateWith { b -> builds.lastOrNull { it.channel == b.channel && it.versionCode < b.versionCode } }
+        val single = builds.associate { b -> b.versionCode to margins[b.versionCode].orEmpty().filter { it.singlePoint }.associateBy { it.id } }
+        var drifted = 0
+        val rows = ids.map { id ->
+            val kinds = LinkedHashSet<String>()
+            val cells = builds.map { b ->
+                val t = tables.getValue(b)
+                val r = t.entries[id]
+                val sp = single[b.versionCode]?.get(id)
+                val mark = if (sp != null) (if (sp.shapeOnly) " ⚠" else " ·") else ""
+                if (sp != null) kinds += "single"
+                when {
+                    id in t.missing -> { kinds += "missing"; io.github.wzgrx.dexadapt.report.Html.td("缺$mark", "cell bad", t.missing[id]) }
+                    r == null -> io.github.wzgrx.dexadapt.report.Html.td("—", "cell na", "这个构建没有")
+                    else -> {
+                        val before = prev[b]?.let { tables.getValue(it).entries[id] }
+                        val changed = before != null && before != r
+                        if (changed) kinds += "drift"
+                        val text = describe(r) + (if (changed) "\n上一版：" + describe(before) else "") + (sp?.let { "\n单点依赖：" + it.critical.joinToString() } ?: "")
+                        io.github.wzgrx.dexadapt.report.Html.td((if (changed) "变" else "✓") + mark, if (changed) "cell warn" else "cell ok", text)
+                    }
+                }
+            }
+            if ("drift" in kinds) drifted++
+            io.github.wzgrx.dexadapt.report.Html.Row(
+                listOf(io.github.wzgrx.dexadapt.report.Html.td(io.github.wzgrx.dexadapt.report.Html.code(id), "id", raw = true, sort = id)) + cells,
+                kinds.toList(),
+            )
+        }
+        val missingTotal = builds.sumOf { tables.getValue(it).missing.size }
+        val singleIds = single.values.flatMap { it.keys }.toSet()
+        val body = buildString {
+            append(
+                io.github.wzgrx.dexadapt.report.Html.cards(
+                    listOf(
+                        "${ids.size}" to "符号",
+                        "${builds.size}" to "构建",
+                        "$drifted" to "有改名的符号（查询跟上了）",
+                        "$missingTotal" to "解析不到（各构建合计）",
+                        "${singleIds.size}" to "单点依赖的符号",
+                    ),
+                ),
+            )
+            append("<h2>热力图</h2>")
+            append("<div class=\"legend\"><span><i class=\"ok\"></i>和上一版位置相同</span><span><i class=\"warn\"></i>改了名，查询跟上了</span>")
+            append("<span><i class=\"bad\"></i>解析不到</span><span><i class=\"na\"></i>这个构建没有</span><span>⚠ 单点依赖且只靠形状　· 单点依赖</span><span>鼠标停在格子上看位置</span></div>")
+            append(
+                io.github.wzgrx.dexadapt.report.Html.table(
+                    listOf("符号") + builds.map { it.label }, rows,
+                    chips = listOf("drift" to "有改名", "missing" to "有缺失", "single" to "单点依赖"),
+                    placeholder = "搜索符号 id",
+                ),
+            )
+        }
+        return io.github.wzgrx.dexadapt.report.Html.page(title, builds.joinToString("、") { "${it.label}（${it.versionCode}）" }, body)
+    }
+
+    private fun describe(r: Resolved): String = when (r) {
+        is Resolved.Class -> r.name
+        is Resolved.Method -> "${r.owner}#${r.name}(${r.params.joinToString(",")})${r.returns}"
+        is Resolved.Field -> "${r.owner}#${r.name}:${r.type}"
+    }
+
     private fun cell(r: Resolved?): String = when (r) {
         null -> "—"
         is Resolved.Class -> "`${r.name}`"
