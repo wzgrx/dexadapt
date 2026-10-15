@@ -25,7 +25,7 @@ class AccessorsTest {
             "class HostAccess(private val linker: SymbolLinker, catalog: Catalog)",
             "val note: Note = Note()",
             "val feed: Class<*> get() = c(\"note.feed\")",
-            "fun poi(target: Any?): Any? = read(\"note.poi\", target) as Any?",
+            "fun poi(target: Any?): Any? = read(\"note.poi\", target)",
             "fun title(target: Any?): String? = read(\"note.title\", target) as String?",
             "fun countOrNull(target: Any?): Long? = readOrNull(\"note.count\", target) as Long?",
             "fun setCount(target: Any?, value: Long) = f(\"note.count\").set(target, value)",

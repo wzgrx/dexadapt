@@ -82,6 +82,9 @@ object Accessors {
         appendLine("}")
     }
 
+    /** 读出来的值本来就是 `Any?`，转成 `Any?` 是多余的（编译器警告“Cast is redundant”）。 */
+    private fun castTo(type: String) = if (type == "Any?") "" else " as $type"
+
     /** [raw] 是不带反引号的基名：自身是关键字时加反引号，派生的名字（xxxOrNull、setXxx）不是关键字。 */
     private fun StringBuilder.member(s: Symbol, raw: String) {
         val id = s.id
@@ -97,8 +100,8 @@ object Accessors {
                 val primitive = !t.endsWith("?")
                 val desc = s.query.type?.let(::describe)?.let { "（$it）" } ?: ""
                 appendLine("        /** `$id`：字段$desc。 */")
-                appendLine("        fun $name(target: Any?): $t = read(\"$id\", target) as $t")
-                appendLine("        fun ${raw}OrNull(target: Any?): ${if (primitive) "$t?" else t} = readOrNull(\"$id\", target) as ${if (primitive) "$t?" else t}")
+                appendLine("        fun $name(target: Any?): $t = read(\"$id\", target)${castTo(t)}")
+                appendLine("        fun ${raw}OrNull(target: Any?): ${if (primitive) "$t?" else t} = readOrNull(\"$id\", target)${castTo(if (primitive) "$t?" else t)}")
                 appendLine("        fun set${raw.replaceFirstChar(Char::uppercaseChar)}(target: Any?, value: $t) = f(\"$id\").set(target, value)")
             }
             is MethodSymbol -> {
@@ -115,10 +118,7 @@ object Accessors {
                 appendLine("        /** `$id`：$desc。${if (ctor) "" else "静态方法 receiver 传 null。"} */")
                 val receiver = if (ctor) "" else "receiver: Any?, "
                 val recv = if (ctor) "null" else "receiver"
-                val cast = when (result) {
-                    "Unit" -> ""
-                    else -> " as $result"
-                }
+                val cast = if (result == "Unit") "" else castTo(result)
                 if (params != null) {
                     val decl = params.mapIndexed { i, p -> "a$i: ${kotlinType(p).let { if (it == "Unit") "Any?" else it }}" }.joinToString(", ")
                     val pass = params.indices.joinToString(", ") { "a$it" }
