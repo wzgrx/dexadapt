@@ -11,3 +11,5 @@ local.properties
 apks/*/
 # 旧版验证台在本机放的第三方源码（不入库）
 third_party/
+# 旧版验证台用的 DexKit 二进制（只在本机）
+legacy/libs/
