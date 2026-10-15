@@ -2,7 +2,14 @@ package io.github.wzgrx.dexadapt.dexlib
 
 import com.android.tools.smali.dexlib2.DexFileFactory
 import com.android.tools.smali.dexlib2.Opcodes
+import com.android.tools.smali.dexlib2.iface.Annotation
+import com.android.tools.smali.dexlib2.iface.instruction.NarrowLiteralInstruction
 import com.android.tools.smali.dexlib2.iface.instruction.ReferenceInstruction
+import com.android.tools.smali.dexlib2.iface.instruction.WideLiteralInstruction
+import com.android.tools.smali.dexlib2.iface.value.ArrayEncodedValue
+import com.android.tools.smali.dexlib2.iface.value.EncodedValue
+import com.android.tools.smali.dexlib2.iface.value.StringEncodedValue
+import io.github.wzgrx.dexadapt.resolve.AnnotationText
 import com.android.tools.smali.dexlib2.iface.reference.FieldReference
 import com.android.tools.smali.dexlib2.iface.reference.MethodReference
 import com.android.tools.smali.dexlib2.iface.reference.StringReference
@@ -20,6 +27,8 @@ class ClassInfo(
     override val superName: String?,
     override val interfaces: List<String>,
     override val flags: Int,
+    override val sourceFile: String? = null,
+    override val annotations: List<String> = emptyList(),
 ) : ClassView {
     override val fields = mutableListOf<FieldInfo>()
     override val methods = mutableListOf<MethodInfo>()
@@ -38,10 +47,18 @@ class MethodInfo(
     override val calls: Set<String>,
     /** Accessed fields as `owner#name`. */
     override val fieldRefs: Set<String>,
+    /** 操作码（[OpcodeNames] 的下标），省内存。 */
+    private val opcodeIds: ByteArray = EMPTY_OPS,
+    override val numbers: Set<Long> = emptySet(),
+    override val annotations: List<String> = emptyList(),
 ) : MethodView {
+    override val opcodes: List<String> get() = opcodeIds.map { OpcodeNames.name(it) }
+
     override val signature = MethodView.signature(owner, name, params, returns)
 
     companion object {
+        private val EMPTY_OPS = ByteArray(0)
+
         fun signature(owner: String, name: String, params: List<String>, returns: String) = MethodView.signature(owner, name, params, returns)
     }
 }
@@ -82,18 +99,31 @@ class DexIndex private constructor(
             val interner = HashMap<String, String>()
             fun intern(s: String) = interner.getOrPut(s) { s }
 
-            for (entryName in container.dexEntryNames.sortedWith(compareBy({ it.length }, { it }))) {
+            // 只认 classes*.dex（和 ART、DexKit 一样）；assets 里藏的 dex 是运行时另外加载的，不在宿主的类加载器里。
+            for (entryName in container.dexEntryNames.filter { it.matches(CLASSES_DEX) }.sortedWith(compareBy({ it.length }, { it }))) {
                 val dex = container.getEntry(entryName)!!.dexFile
                 for (def in dex.classes) {
                     val name = intern(jvmName(def.type))
                     if (name in classes) continue // first definition wins, like the runtime class loader
-                    val info = ClassInfo(name, def.superclass?.let { intern(jvmName(it)) }, def.interfaces.map { intern(jvmName(it)) }, def.accessFlags)
+                    val info = ClassInfo(
+                        name, def.superclass?.let { intern(jvmName(it)) }, def.interfaces.map { intern(jvmName(it)) }, def.accessFlags,
+                        def.sourceFile?.takeIf { it.isNotEmpty() }?.let(::intern), def.annotations.map(::annotationText),
+                    )
                     for (f in def.fields) info.fields += FieldInfo(name, intern(f.name), intern(jvmName(f.type)), f.accessFlags)
                     for (m in def.methods) {
                         val strings = HashSet<String>()
                         val calls = HashSet<String>()
                         val fieldRefs = HashSet<String>()
+                        var numbers: HashSet<Long>? = null
+                        val ops = ArrayList<Byte>()
                         m.implementation?.instructions?.forEach { insn ->
+                            // switch / 数组的数据块（payload）和对齐用的 nop 不算指令（DexKit 把数据块报成 nop，两边都去掉）。
+                            val op = insn.opcode.name
+                            if (op != "nop" && !op.endsWith("-payload")) ops += OpcodeNames.id(op)
+                            when (insn) {
+                                is WideLiteralInstruction -> (numbers ?: HashSet<Long>().also { numbers = it }) += insn.wideLiteral
+                                is NarrowLiteralInstruction -> (numbers ?: HashSet<Long>().also { numbers = it }) += insn.narrowLiteral.toLong()
+                            }
                             if (insn is ReferenceInstruction) {
                                 when (val ref = insn.reference) {
                                     is StringReference -> strings += intern(ref.string)
@@ -107,6 +137,7 @@ class DexIndex private constructor(
                         val method = MethodInfo(
                             name, intern(m.name), m.parameterTypes.map { intern(jvmName(it.toString())) }, intern(jvmName(m.returnType)),
                             m.accessFlags, strings, calls, fieldRefs,
+                            ops.toByteArray(), numbers ?: emptySet(), m.annotations.map(::annotationText),
                         )
                         info.methods += method
                         for (s in strings) byString.getOrPut(s) { ArrayList(2) } += method
@@ -115,6 +146,18 @@ class DexIndex private constructor(
                 }
             }
             return DexIndex(classes, byString, DexDigest.of(apk))
+        }
+
+        /** 注解写成 [AnnotationText]：只保留字符串值（含字符串数组），和 DexKit 那边一致。 */
+        private val CLASSES_DEX = Regex("classes\\d*\\.dex")
+
+        private fun annotationText(a: Annotation): String =
+            AnnotationText.of(jvmName(a.type), a.elements.mapNotNull { e -> encoded(e.value)?.let { e.name to it } })
+
+        private fun encoded(v: EncodedValue): String? = when (v) {
+            is StringEncodedValue -> v.value
+            is ArrayEncodedValue -> v.value.mapNotNull(::encoded).takeIf { it.isNotEmpty() }?.joinToString(",")
+            else -> null
         }
 
         fun jvmName(descriptor: String): String {

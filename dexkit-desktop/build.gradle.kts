@@ -23,3 +23,16 @@ val generateInfo = tasks.register("generateDexKitInfo") {
     }
 }
 kotlin.sourceSets.named("main") { kotlin.srcDir(generateInfo) }
+
+dependencies {
+    testImplementation(project(":dexlib"))
+}
+
+tasks.test {
+    maxHeapSize = "10g"
+    testLogging { events("standard_error") }
+    // 真实 APK 样本（没有时测试跳过）。
+    val samples = System.getenv("DEXADAPT_SAMPLES").orEmpty()
+    environment("DEXADAPT_SAMPLES", samples)
+    inputs.property("samples", samples)
+}

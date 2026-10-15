@@ -20,10 +20,10 @@ class CatalogTest {
         assertEquals(16, base.length)
         assertEquals(base, Catalog(Demo).fingerprint("engine=1\n"))
         assertNotEquals(base, catalog.fingerprint("engine=2\n"))
-        // 定义文字的格式和红薯助手原来的 SymbolCatalog 一致（键按构建标识排序），换库后指纹不变。
+        // 定义文字：查询的 toString 加上钉子（按构建标识排序）和“没有”的标注。
         val pinned = Catalog(listOf(ClassSymbol("x.a", ClassQuery(name = "a.A")).pin("CN_2", Pin.Class("a.A")).pin("CN_1", Pin.Class("a.A")).absentIn("PLAY_1")))
         val text = "x.a|ClassQuery(name=a.A, packagePrefix=null, superclass=null, interfaces=[], strings=[], fieldTypes=[], fieldNames=[], methods=[], " +
-            "isInterface=null, isAbstract=null, samePackageAs=null, fieldOf=null, instantiatedIn=[], declares=[])|[CN_1=Class(name=a.A), CN_2=Class(name=a.A)]|[PLAY_1]"
+            "isInterface=null, isAbstract=null, samePackageAs=null, fieldOf=null, instantiatedIn=[], declares=[], sourceFile=null, annotations=[])|[CN_1=Class(name=a.A), CN_2=Class(name=a.A)]|[PLAY_1]"
         val expected = Hex.of(java.security.MessageDigest.getInstance("SHA-256").digest(text.toByteArray())).take(16)
         assertEquals(expected, pinned.fingerprint())
     }

@@ -51,6 +51,10 @@ data class ClassQuery(
     val instantiatedIn: List<MethodSymbol> = emptyList(),
     /** 声明了这些方法（方法能靠调用关系等找到、类本身只有形状时，用“它是那个方法的所属类”定位）。 */
     val declares: List<MethodSymbol> = emptyList(),
+    /** dex 里保留的源文件名（`SourceFile` 属性，很多 App 为了崩溃堆栈留着，例如 `FeedbackOverlay.kt`）。 */
+    val sourceFile: String? = null,
+    /** 类上的注解，每一项是要出现在某个注解里的文字（注解类型名或它的字符串值）。 */
+    val annotations: List<String> = emptyList(),
 )
 
 /** Shape of a method used inside [ClassQuery.methods] or as the main part of a [MethodQuery]. */
@@ -60,6 +64,15 @@ data class MethodShape(
     val returns: TypeRef? = null,
     val strings: List<String> = emptyList(),
     val isStatic: Boolean? = null,
+    /** 方法体里用到的数字常量（全部要出现），例如特征明显的 magic number、业务码。 */
+    val numbers: List<Long> = emptyList(),
+    /** 方法上的注解，每一项是要出现在某个注解里的文字，例如 `retrofit2.http.GET`、`/api/sns/v1/note/feed`。 */
+    val annotations: List<String> = emptyList(),
+    /**
+     * 指令过滤器：这些操作码按顺序出现在方法体里（中间可以夹别的指令），写法同 smali，例如
+     * `["const-string", "invoke-virtual", "move-result-object"]`。比整段操作码序列宽松，小改动不会断。
+     */
+    val opcodes: List<String> = emptyList(),
 )
 
 data class MethodQuery(

@@ -88,6 +88,10 @@ interface ClassView {
     val flags: Int
     val fields: List<FieldView>
     val methods: List<MethodView>
+    /** `SourceFile` 属性（没有为 null）。 */
+    val sourceFile: String? get() = null
+    /** 类上的注解，每个写成 [AnnotationText] 的样子。 */
+    val annotations: List<String> get() = emptyList()
     val isInterface: Boolean get() = flags and AccessFlag.INTERFACE != 0
     val isAbstract: Boolean get() = flags and AccessFlag.ABSTRACT != 0
 }
@@ -112,6 +116,12 @@ interface MethodView {
     val calls: Set<String>
     /** 读写到的字段，写成 `owner#name`。 */
     val fieldRefs: Set<String>
+    /** 方法体的操作码，按出现顺序，写成 smali 名字（`const-string`、`invoke-virtual`……）。 */
+    val opcodes: List<String> get() = emptyList()
+    /** 方法体里的数字常量（整数按有符号值，浮点数按位）。 */
+    val numbers: Set<Long> get() = emptySet()
+    /** 方法上的注解，每个写成 [AnnotationText] 的样子。 */
+    val annotations: List<String> get() = emptyList()
     val isStatic: Boolean get() = flags and AccessFlag.STATIC != 0
     val signature: String get() = signature(owner, name, params, returns)
 
@@ -119,6 +129,12 @@ interface MethodView {
         fun signature(owner: String, name: String, params: List<String>, returns: String) =
             "$owner#$name(${params.joinToString(",")})$returns"
     }
+}
+
+/** 注解在两个数据源里的统一写法：`类型名 名字=值 名字=值`，字符串值原样、数组用逗号连起来，用来按文字匹配。 */
+object AnnotationText {
+    fun of(type: String, elements: List<Pair<String, String>>): String =
+        (listOf(type) + elements.map { (k, v) -> "$k=$v" }).joinToString(" ")
 }
 
 /** dex 访问标志位（和 dexlib2 AccessFlags、DexKit getAccessFlags 同值）。 */

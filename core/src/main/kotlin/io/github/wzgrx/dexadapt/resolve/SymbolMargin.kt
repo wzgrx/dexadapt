@@ -43,7 +43,7 @@ data class SymbolMargin(val id: String, val drops: List<Drop>) {
         /** 算作“锚”的条件（字符串、调用 / 被调用、创建、字段读写、Gson 字段名、所属关系）。 */
         private val ANCHORS = listOf(
             "strings[", "calls[", "callsExact[", "calledBy[", "instantiatedIn[", "declares[", "accessedIn[", "usesFields[",
-            "fieldNames[", "fieldOf", "samePackageAs", "excludes[",
+            "fieldNames[", "fieldOf", "samePackageAs", "excludes[", "sourceFile", "annotations[", "numbers[",
         )
 
         /** [symbol] 的查询逐个去掉一个条件后的变体（条件说明 to 变体查询）。 */
@@ -78,6 +78,8 @@ data class SymbolMargin(val id: String, val drops: List<Drop>) {
             q.fieldOf?.let { add("fieldOf" to q.copy(fieldOf = null)) }
             q.instantiatedIn.forEachIndexed { i, m -> add("instantiatedIn[${m.id}]" to q.copy(instantiatedIn = q.instantiatedIn.without(i))) }
             q.declares.forEachIndexed { i, m -> add("declares[${m.id}]" to q.copy(declares = q.declares.without(i))) }
+            q.sourceFile?.let { add("sourceFile" to q.copy(sourceFile = null)) }
+            q.annotations.forEachIndexed { i, a -> add("annotations[\"$a\"]" to q.copy(annotations = q.annotations.without(i))) }
         }
 
         private fun methodVariants(q: MethodQuery): List<Pair<String, Any>> = buildList {
@@ -87,6 +89,9 @@ data class SymbolMargin(val id: String, val drops: List<Drop>) {
             s.returns?.let { add("returns" to q.copy(shape = s.copy(returns = null))) }
             s.isStatic?.let { add("isStatic" to q.copy(shape = s.copy(isStatic = null))) }
             s.strings.forEachIndexed { i, str -> add("strings[\"$str\"]" to q.copy(shape = s.copy(strings = s.strings.without(i)))) }
+            s.numbers.forEachIndexed { i, n -> add("numbers[$n]" to q.copy(shape = s.copy(numbers = s.numbers.without(i)))) }
+            s.annotations.forEachIndexed { i, a -> add("annotations[\"$a\"]" to q.copy(shape = s.copy(annotations = s.annotations.without(i)))) }
+            if (s.opcodes.isNotEmpty()) add("opcodes" to q.copy(shape = s.copy(opcodes = emptyList())))
             q.calls.forEachIndexed { i, m -> add("calls[${m.id}]" to q.copy(calls = q.calls.without(i))) }
             q.callsExact.forEachIndexed { i, c -> add("callsExact[$c]" to q.copy(callsExact = q.callsExact.without(i))) }
             q.usesFields.forEachIndexed { i, f -> add("usesFields[${f.id}]" to q.copy(usesFields = q.usesFields.without(i))) }

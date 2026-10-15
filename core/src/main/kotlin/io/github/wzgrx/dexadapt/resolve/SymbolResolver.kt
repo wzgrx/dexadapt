@@ -186,6 +186,13 @@ class SymbolResolver(
             ?: throw Unresolved("depends on ${symbol.id}: ${m.owner}#${m.name} not in the source")
     }
 
+    /** [pattern] 按顺序出现在 [ops] 里（中间可以有别的）。 */
+    private fun isSubsequence(pattern: List<String>, ops: List<String>): Boolean {
+        var i = 0
+        for (op in ops) if (i < pattern.size && op == pattern[i]) i++
+        return i == pattern.size
+    }
+
     /** [caller] 的方法体调用了 [m]（引用可能写在 m 所属类的子类上，R8 member rebinding）。 */
     private fun invokes(caller: MethodView, m: MethodView): Boolean {
         if (m.signature in caller.calls) return true
@@ -259,6 +266,8 @@ class SymbolResolver(
         }
         if (!q.methods.all { shape -> c.methods.any { matches(it, shape) } }) return false
         if (!q.declares.all { methodView(it).owner == c.name }) return false
+        q.sourceFile?.let { if (c.sourceFile != it) return false }
+        if (q.annotations.isNotEmpty() && !q.annotations.all { a -> c.annotations.any { it.contains(a) } }) return false
         return q.instantiatedIn.all { m -> methodView(m).calls.any { it.startsWith(c.name + "#<init>(") } }
     }
 
@@ -270,7 +279,10 @@ class SymbolResolver(
             if (p.indices.any { i -> p[i] != TypeRef.Any && m.params[i] != typeName(p[i]) }) return false
         }
         s.returns?.let { if (m.returns != typeName(it)) return false }
-        return m.strings.containsAll(s.strings)
+        if (!m.strings.containsAll(s.strings)) return false
+        if (s.numbers.isNotEmpty() && !m.numbers.containsAll(s.numbers)) return false
+        if (s.annotations.isNotEmpty() && !s.annotations.all { a -> m.annotations.any { it.contains(a) } }) return false
+        return s.opcodes.isEmpty() || isSubsequence(s.opcodes, m.opcodes)
     }
 
     private fun findMethods(q: MethodQuery): List<MethodView> {

@@ -3,6 +3,7 @@ package io.github.wzgrx.dexadapt.dexkit
 import io.github.wzgrx.dexadapt.ClassQuery
 import io.github.wzgrx.dexadapt.MethodQuery
 import io.github.wzgrx.dexadapt.TypeRef
+import io.github.wzgrx.dexadapt.resolve.AnnotationText
 import io.github.wzgrx.dexadapt.resolve.ClassView
 import io.github.wzgrx.dexadapt.resolve.FieldView
 import io.github.wzgrx.dexadapt.resolve.MethodView
@@ -16,6 +17,8 @@ import org.luckypray.dexkit.query.matchers.ClassMatcher
 import org.luckypray.dexkit.query.matchers.MethodMatcher
 import org.luckypray.dexkit.result.ClassData
 import org.luckypray.dexkit.result.FieldData
+import org.luckypray.dexkit.result.AnnotationData
+import org.luckypray.dexkit.result.AnnotationEncodeValue
 import org.luckypray.dexkit.result.MethodData
 
 /**
@@ -107,6 +110,8 @@ class DexKitSource(
         override val flags: Int = data.accessFlags
         override val fields: List<FieldView> by lazy { data.fields.map(::KField) }
         override val methods: List<MethodView> by lazy { data.methods.map(::KMethod) }
+        override val sourceFile: String? by lazy { data.sourceFile.takeIf { it.isNotEmpty() } }
+        override val annotations: List<String> by lazy { data.annotations.map(::annotationText) }
     }
 
     private class KField(data: FieldData) : FieldView {
@@ -126,9 +131,29 @@ class DexKitSource(
         override val calls: Set<String> by lazy { data.invokes.mapTo(HashSet()) { MethodView.signature(it.className, it.name, it.paramTypeNames, it.returnTypeName) } }
         override val fieldRefs: Set<String> by lazy { data.usingFields.mapTo(HashSet()) { "${it.field.className}#${it.field.name}" } }
         override val signature: String = MethodView.signature(owner, name, params, returns)
+        // DexKit 把 switch / 数组的数据块报成 nop；nop 不算指令（和 dexlib 那边一致）。
+        override val opcodes: List<String> by lazy { data.opNames.filter { it != "nop" } }
+        // usingNumbers 在 DexKit 里还标着实验性。
+        @OptIn(org.luckypray.dexkit.annotations.DexKitExperimentalApi::class)
+        override val numbers: Set<Long> by lazy {
+            data.usingNumbers.mapTo(HashSet()) { n -> if (n.bitWidth <= 32) n.rawBits.toInt().toLong() else n.rawBits }
+        }
+        override val annotations: List<String> by lazy { data.annotations.map(::annotationText) }
     }
 
     companion object {
+        /** 注解写成 [AnnotationText]：只保留字符串值（含字符串数组），和 dexlib 那边一致。 */
+        private fun annotationText(a: AnnotationData): String =
+            AnnotationText.of(a.typeName, a.elements.mapNotNull { e -> encoded(e.value.value)?.let { e.name to it } })
+
+        private fun encoded(v: Any?): String? = when (v) {
+            is String -> v
+            is AnnotationEncodeValue -> encoded(v.value)
+            is Collection<*> -> v.mapNotNull(::encoded).takeIf { it.isNotEmpty() }?.joinToString(",")
+            else -> v?.javaClass?.methods?.firstOrNull { it.name == "getValues" && it.parameterCount == 0 }
+                ?.let { m -> (m.invoke(v) as? Collection<*>)?.mapNotNull(::encoded)?.takeIf { it.isNotEmpty() }?.joinToString(",") }
+        }
+
         /** 一次批量查多少个字符串（全部几百个一起查时结果集太大，分几批）。 */
         private const val BATCH = 200
 

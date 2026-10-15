@@ -16,6 +16,7 @@ dependencyResolutionManagement {
 rootProject.name = "dexadapt"
 
 include(":core")
+include(":apk")
 include(":dexlib")
 include(":dexkit")
 include(":dexkit-desktop")
