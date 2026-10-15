@@ -44,6 +44,7 @@ Google Play 版共 4 个内置版本）。设计方案见 [docs/DESIGN.md](docs/
 | `libs` | 开源库识别：Maven 上官方构件的指纹库、版本判断、类对应 |
 | `hooks` | Hook 框架适配：libxposed、传统 Xposed API、YukiHookAPI、EzXHelper（框架 compileOnly，不打包） |
 | `cli` | 命令行和 MCP 服务 |
+| `jadx-plugin` | jadx 插件：右键类 / 方法 / 字段生成查询 |
 
 ## 命令行
 
@@ -60,12 +61,22 @@ dexadapt suggest --apk new.apk --target 'a.b.C#m(int)void' --other old.apk
 dexadapt repair --spec hooks.yaml --old old.apk --new new.apk
 dexadapt libs app.apk --out libs/
 dexadapt export --spec hooks.yaml --out hooks.json
+dexadapt lint --spec hooks.yaml --apk app.apk                 # spec 检查器
 dexadapt import --from revanced fingerprints.kt --out imported.yaml   # 也支持 morphe、qauxiliary
 dexadapt export --spec hooks.yaml --to revanced --out fingerprints.kt
 dexadapt codegen --spec hooks.yaml --package my.mod --out HostAccess.kt # 类型化访问器
 dexadapt keygen --out table.key && dexadapt sign --key table.key 1234-abcd.json   # 共享适配表
 dexadapt mcp                                                # MCP 服务（标准输入输出）
 ```
+
+jadx 插件（jadx 1.5+）：
+
+```bash
+./gradlew :jadx-plugin:pluginJar
+jadx plugins --install-jar jadx-plugin/build/libs/dexadapt-jadx-plugin.jar
+```
+
+在 jadx 里右键一个类、方法或字段 →“DexAdapt：生成查询”，查询（YAML）弹窗显示并复制到剪贴板。
 
 接到 Claude Code：
 

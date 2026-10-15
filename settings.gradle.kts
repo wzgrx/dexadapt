@@ -29,6 +29,7 @@ include(":runtime")
 // Hook 框架适配要编译期的 android.jar（Android SDK）；没有 SDK 的机器上不构建这个模块
 if (androidJar() != null) include(":hooks")
 include(":cli")
+include(":jadx-plugin")
 
 /** Android SDK 里最新的 android.jar（ANDROID_HOME，或 ~/Android/Sdk）。 */
 fun androidJar(): File? {
