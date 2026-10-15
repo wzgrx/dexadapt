@@ -45,6 +45,7 @@ class RuntimeTest {
         assertTrue((AdaptPolicy.decide("X 1.0", null, table("c", "b"), "c", "a", digest) as AdaptPolicy.Decision.Scan).reason.contains("安装包变了"))
         assertEquals(AdaptPolicy.Decision.Skip(false), AdaptPolicy.decide("X 1.0", null, table("c", "a"), "c", "a", digest))
         assertEquals(3, computed)
+        assertTrue((AdaptPolicy.decide("X 1.0", null, table("c", "a").copy(partial = true), "c", "a", digest) as AdaptPolicy.Decision.Scan).reason.contains("没做完"))
         val stamped = AdaptPolicy.stamp(table(), "c", "1.0", "a", 3, "why", now = 5)
         assertEquals(listOf("c", "dexkit", "1.0", "a"), listOf(stamped.catalog, stamped.generator, stamped.module, stamped.apk))
     }

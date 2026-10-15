@@ -49,4 +49,16 @@ class GuessTest {
         assertTrue("t.m" in table.missing && "t.m" !in table.entries)
         assertEquals(table, SymbolTable.fromJson(table.toJson()))
     }
+
+    @Test
+    fun `stages hand out partial tables, then the full one`() {
+        val r = SymbolResolver(DexIndex.of(listOf(x)), 2)
+        val seen = ArrayList<SymbolTable>()
+        val full = r.tableInStages(listOf(listOf(owner), listOf(m, f, nothing)), { seen += it })
+        assertEquals(1, seen.size)
+        assertTrue(seen[0].partial)
+        assertEquals(setOf("t.x"), seen[0].entries.keys)
+        assertTrue(!full.partial && full.entries.keys == setOf("t.x") && full.missing.keys == setOf("t.m", "t.f", "t.none"))
+        assertEquals(r.table(listOf(owner, m, f, nothing)), full)
+    }
 }

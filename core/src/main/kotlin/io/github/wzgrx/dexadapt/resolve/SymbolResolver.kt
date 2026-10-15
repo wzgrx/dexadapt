@@ -56,6 +56,30 @@ class SymbolResolver(
         return SymbolTable(versionCode, source.dexSha256, entries, missing)
     }
 
+    /**
+     * 按需解析（设计 10.8）：按 [stages] 的顺序一批批解析（例如先解析开着的功能要用的符号），每批解析完交出一张
+     * 到目前为止的部分表（[SymbolTable.partial]），最后返回完整表。依赖只解析一次（后面的批次直接用结果）。
+     *
+     * 使用前提：拿到部分表的一方（宿主进程）不能在运行中途才去用部分表里还没有的符号，否则会在完整表到来之前报“未适配”；
+     * 适合功能在安装时就取齐全部符号、装不上会在换表后重试的运行时。
+     */
+    fun tableInStages(stages: List<List<Symbol>>, onStage: (SymbolTable) -> Unit, onProgress: (done: Int, total: Int) -> Unit = { _, _ -> }): SymbolTable {
+        val all = stages.flatten().distinctBy { it.id }
+        val entries = sortedMapOf<String, Resolved>()
+        val missing = sortedMapOf<String, String>()
+        source.prefetchStrings(queryStrings(all.filterNot(skip)))
+        var count = 0
+        stages.forEachIndexed { i, stage ->
+            for (s in stage) {
+                if (s.id in entries || s.id in missing) continue
+                if (!skip(s)) resolve(s).fold({ entries[s.id] = it }, { missing[s.id] = it.message ?: it.toString() })
+                onProgress(++count, all.size)
+            }
+            if (i < stages.lastIndex) onStage(SymbolTable(versionCode, source.dexSha256, entries.toSortedMap(), missing.toSortedMap(), partial = true))
+        }
+        return SymbolTable(versionCode, source.dexSha256, entries, missing)
+    }
+
     /** 查询里用来找起点的字符串（类查询的 strings、方法查询的 shape.strings）；类查询里方法形状的字符串只用来核对，不预取。 */
     private fun queryStrings(symbols: List<Symbol>): Set<String> = symbols.flatMapTo(LinkedHashSet()) { s ->
         when (s) {

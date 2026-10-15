@@ -52,13 +52,14 @@ object AdaptPolicy {
      * 不一致（灰度包、渠道包）或没有内置表时，看本机表是否还能用（目录指纹、安装包身份）。
      */
     fun decide(host: String, bundled: SymbolTable?, local: SymbolTable?, catalog: String, apkIdentity: String, dexDigest: () -> String?): Decision {
-        val localOk = local != null && local.catalog == catalog && local.apk == apkIdentity
+        val localOk = local != null && !local.partial && local.catalog == catalog && local.apk == apkIdentity
         if (bundled != null) {
             if (dexDigest() == bundled.dexSha256) return Decision.Skip(clearLocal = true)
             return if (localOk) Decision.Skip(false) else Decision.Scan("$host 的代码和内置适配不一致（可能是灰度或渠道包），用本机适配覆盖")
         }
         return when {
             local == null -> Decision.Scan("$host 没有内置适配")
+            local.partial -> Decision.Scan("上次本机适配没做完，重新适配")
             local.catalog != catalog -> Decision.Scan("模块更新后符号定义变了，重新适配")
             local.apk != apkIdentity -> Decision.Scan("宿主安装包变了，重新适配")
             else -> Decision.Skip(false)

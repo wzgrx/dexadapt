@@ -36,6 +36,11 @@ data class SymbolTable(
      * 符号仍然记在 [missing] 里。
      */
     val guesses: Map<String, Guessed> = emptyMap(),
+    /**
+     * 按需解析（设计 10.8）先交出去的部分表：只含前几批符号，后面的还在解析；完整表到了会替换它。
+     * 模块 App 侧遇到部分表（例如解析中途被杀）要重扫。
+     */
+    val partial: Boolean = false,
 ) {
     /** 推测的位置和推测方法。 */
     @Serializable
