@@ -29,6 +29,8 @@ class SymbolLinker(
 ) {
     private class State(val table: SymbolTable?) {
         val cache = ConcurrentHashMap<String, Result<Any>>()
+        /** 反查：查出来的 Class / Executable / Field → 符号 id。 */
+        val ids = ConcurrentHashMap<Any, String>()
     }
 
     @Volatile
@@ -57,6 +59,9 @@ class SymbolLinker(
     } as Executable
 
     fun methodOrNull(symbol: MethodSymbol): Executable? = runCatching { method(symbol) }.getOrNull()
+
+    /** [member]（[clazz]、[method]、[field] 查出来的对象）是哪个符号；不是按表查出来的返回 null。 */
+    fun idOf(member: Any): String? = state.ids[member]
 
     fun field(symbol: FieldSymbol): Field = lookup(symbol) { r: Resolved.Field ->
         load(r.owner).getDeclaredField(r.name).apply { isAccessible = true }.also { f ->
@@ -87,7 +92,7 @@ class SymbolLinker(
                 val t = s.table ?: throw SymbolUnavailable(symbol.id, unsupported)
                 val entry = t.entries[symbol.id]
                     ?: throw SymbolUnavailable(symbol.id, t.missing[symbol.id]?.let { "未找到（$it）" } ?: "符号表中没有")
-                build(entry as R)
+                build(entry as R).also { s.ids[it] = symbol.id }
             }.onFailure { log("symbol ${symbol.id} unavailable: ${it.message}") }
         }.getOrThrow()
     }

@@ -16,23 +16,36 @@ import java.security.MessageDigest
  */
 abstract class SymbolGroup(val group: String) {
     private val own = mutableListOf<Symbol>()
+    private val ownContracts = LinkedHashMap<String, Contract>()
     val symbols: List<Symbol> get() = own
+
+    /** 本组方法符号的契约（[Contract]），按符号 id。 */
+    val contracts: Map<String, Contract> get() = ownContracts
 
     protected fun cls(name: String, query: ClassQuery) = ClassSymbol("$group.$name", query).also(own::add)
     protected fun method(name: String, query: MethodQuery) = MethodSymbol("$group.$name", query).also(own::add)
     protected fun field(name: String, query: FieldQuery) = FieldSymbol("$group.$name", query).also(own::add)
+
+    /** 给本组的方法符号写契约（本机适配的新表先观察，满足了才放开）。 */
+    protected fun MethodSymbol.contract(contract: Contract): MethodSymbol = also {
+        require(it in own) { "${it.id} 不是 $group 组的符号" }
+        ownContracts[it.id] = contract
+    }
 }
 
 /**
  * 一个模块的全部符号（目录）。[fingerprint] 是全部定义（id、查询、钉死的位置、“某版本没有”）的摘要：
  * 本机适配生成的表记下它，模块更新改了查询，旧表就算过期、要重扫。
  */
-class Catalog(val symbols: List<Symbol>) {
-    constructor(vararg groups: SymbolGroup) : this(groups.flatMap { it.symbols })
+class Catalog(val symbols: List<Symbol>, val contracts: Map<String, Contract> = emptyMap()) {
+    constructor(vararg groups: SymbolGroup) : this(groups.flatMap { it.symbols }, groups.fold(emptyMap()) { acc, g -> acc + g.contracts })
 
     init {
         val dupes = symbols.groupBy { it.id }.filterValues { it.size > 1 }.keys
         require(dupes.isEmpty()) { "duplicate symbol ids: $dupes" }
+        val methods = symbols.filterIsInstance<MethodSymbol>().map { it.id }.toSet()
+        val stray = contracts.keys - methods
+        require(stray.isEmpty()) { "契约只能写在目录里的方法符号上：$stray" }
     }
 
     /** 依赖图的问题（前向引用、引用了目录外的符号、成环）；空表示没问题。 */

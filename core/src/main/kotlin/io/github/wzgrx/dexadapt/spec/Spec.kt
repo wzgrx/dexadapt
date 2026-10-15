@@ -26,6 +26,7 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.longOrNull
 import org.snakeyaml.engine.v2.api.Dump
 import org.snakeyaml.engine.v2.api.DumpSettings
@@ -61,7 +62,7 @@ data class Spec(val app: String?, val catalog: Catalog) {
     fun encode(): JsonObject = buildJsonObject {
         put("dexadapt", JsonPrimitive(VERSION))
         app?.let { put("app", JsonPrimitive(it)) }
-        put("symbols", buildJsonArray { catalog.symbols.forEach { add(SpecCodec.symbol(it)) } })
+        put("symbols", buildJsonArray { catalog.symbols.forEach { add(SpecCodec.symbol(it, catalog.contracts[it.id])) } })
     }
 
     companion object {
@@ -80,14 +81,18 @@ data class Spec(val app: String?, val catalog: Catalog) {
             require(version <= VERSION) { "spec 格式版本 $version 比这个 DexAdapt 新（支持到 $VERSION）" }
             val app = root["app"]?.jsonPrimitive?.contentOrNull
             val items = root["symbols"]?.jsonArray ?: error("spec 里没有 symbols")
-            return Spec(app, Catalog(SpecCodec.symbols(items.map { it.jsonObject })))
+            val objects = items.map { it.jsonObject }
+            val contracts = objects.mapNotNull { o ->
+                o["contract"]?.let { c -> o["id"]!!.jsonPrimitive.content to Json.decodeFromJsonElement(io.github.wzgrx.dexadapt.Contract.serializer(), c) }
+            }.toMap()
+            return Spec(app, Catalog(SpecCodec.symbols(objects), contracts))
         }
 
         private fun plain(e: JsonElement): Any? = when (e) {
             is JsonNull -> null
             is JsonObject -> e.mapValuesTo(LinkedHashMap()) { plain(it.value) }
             is JsonArray -> e.map(::plain)
-            is JsonPrimitive -> if (e.isString) e.content else e.booleanOrNull ?: e.longOrNull ?: e.content
+            is JsonPrimitive -> if (e.isString) e.content else e.booleanOrNull ?: e.longOrNull ?: e.doubleOrNull ?: e.content
         }
 
         private fun json(v: Any?): JsonElement = when (v) {
@@ -95,6 +100,7 @@ data class Spec(val app: String?, val catalog: Catalog) {
             is Map<*, *> -> JsonObject(v.entries.associate { (k, x) -> k.toString() to json(x) })
             is List<*> -> JsonArray(v.map(::json))
             is Boolean -> JsonPrimitive(v)
+            is Double, is Float -> JsonPrimitive(v.toDouble())
             is Number -> JsonPrimitive(v.toLong())
             else -> JsonPrimitive(v.toString())
         }
@@ -105,7 +111,7 @@ data class Spec(val app: String?, val catalog: Catalog) {
 internal object SpecCodec {
     // ---- 写 ----
 
-    fun symbol(s: Symbol): JsonObject = obj {
+    fun symbol(s: Symbol, contract: io.github.wzgrx.dexadapt.Contract? = null): JsonObject = obj {
         put("id", JsonPrimitive(s.id))
         when (s) {
             is ClassSymbol -> put("class", cls(s.query))
@@ -114,6 +120,7 @@ internal object SpecCodec {
         }
         if (s.pins.isNotEmpty()) put("pins", obj { s.pins.toSortedMap().forEach { (b, p) -> put(b, pin(p)) } })
         if (s.absentIn.isNotEmpty()) put("absentIn", strings(s.absentIn.sorted()))
+        if (contract != null) put("contract", Json.encodeToJsonElement(io.github.wzgrx.dexadapt.Contract.serializer(), contract))
     }
 
     private fun type(t: TypeRef): String = when (t) {

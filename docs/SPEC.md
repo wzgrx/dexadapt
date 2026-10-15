@@ -87,6 +87,33 @@ symbols:                 # 符号列表，顺序随意，引用在读入时解�
 
 钉死的位置仍要符合查询里能核对的条件；实在描述不了时才用，优先给查询加稳定特征。
 
+## 契约（`contract`）
+
+查询只保证唯一命中，不保证命中的还是“原来那个意思”。方法符号可以写契约：运行时应该看到的参数、this、返回值和线程。
+
+```yaml
+  - id: feedAd.videoParse
+    method: { name: invoke, params: [java.lang.Object], returns: java.lang.Object, strings: [...] }
+    contract:
+      returns: { type: instanceOf, of: java.util.List }
+      minCalls: 2
+```
+
+规则（`type` 字段区分）：
+
+| 规则 | 写法 | 满足条件 |
+|---|---|---|
+| 非空 | `{ type: notNull }` | 不是 null |
+| 类型 | `{ type: instanceOf, of: java.util.List }` | 是这个类或子类（`of` 写 `$id` 指类符号） |
+| 正则 | `{ type: matches, regex: "[0-9a-f]{24}" }` | `toString()` 整个匹配 |
+| 范围 | `{ type: range, min: 0.1, max: 8 }` | 数字（char、boolean 按 0/1）在范围内 |
+
+契约的字段：`args`（参数下标 → 规则）、`receiver`（this）、`returns`、`mainThread`（true / false）、`minCalls`（默认 3）。
+
+运行时（`runtime` 的 `ContractMonitor`）：本机适配出的表（没在电脑上验证过）上，带契约的 Hook 点先**观察**——只调用原方法、
+检查契约，不跑模块的代码；满足 `minCalls` 次后放开，有一次不满足就当“未适配”。结果按表保存，同一张表只观察一次。
+内置表不观察。契约不算进目录指纹，改契约不会让各手机重扫。电脑上 `Contract.problems` 核对契约和每个内置版本的位置对得上。
+
 ## 怎么写得稳
 
 1. 先找锚：数据类 `toString()` 里的 `Xxx(field=`、日志文字、埋点名、接口路径、源文件名。
