@@ -48,7 +48,7 @@ class MethodInfo(
     /** Accessed fields as `owner#name`. */
     override val fieldRefs: Set<String>,
     /** 操作码（[OpcodeNames] 的下标），省内存。 */
-    private val opcodeIds: ByteArray = EMPTY_OPS,
+    internal val opcodeIds: ByteArray = EMPTY_OPS,
     override val numbers: Set<Long> = emptySet(),
     override val annotations: List<String> = emptyList(),
 ) : MethodView {
@@ -92,7 +92,24 @@ class DexIndex private constructor(
             return DexIndex(classes.associateBy { it.name }, byString, "")
         }
 
-        fun load(apk: File): DexIndex {
+        /** 拼装（索引记录读回来时用）：按方法里的字符串建反查表。 */
+        internal fun assemble(classes: List<ClassInfo>, dexSha256: String): DexIndex {
+            val byString = HashMap<String, MutableList<MethodInfo>>(400_000)
+            for (c in classes) for (m in c.methods) for (s in m.strings) byString.getOrPut(s) { ArrayList(2) } += m
+            return DexIndex(classes.associateByTo(HashMap(classes.size * 2)) { it.name }, byString, dexSha256)
+        }
+
+        /**
+         * 读一个 APK（或 .dex）的全部代码。先找索引记录（[IndexCache]，同样的代码只解析一次），没有再用 dexlib2 解析并写记录。
+         * [cache] 为 false 时总是重新解析（不读也不写记录）。
+         */
+        fun load(apk: File, cache: Boolean = true): DexIndex {
+            val key = if (cache) IndexCache.key(apk, CLASSES_DEX) else null
+            key?.let(IndexCache::read)?.let { return it }
+            return parse(apk).also { index -> key?.let { IndexCache.write(it, index) } }
+        }
+
+        private fun parse(apk: File): DexIndex {
             val container = DexFileFactory.loadDexContainer(apk, Opcodes.getDefault())
             val classes = HashMap<String, ClassInfo>(200_000)
             val byString = HashMap<String, MutableList<MethodInfo>>(400_000)

@@ -92,6 +92,8 @@ claude mcp add dexadapt -- /path/to/dexadapt/cli/build/install/dexadapt/bin/dexa
 ## 开发
 
 - JDK 17+ 运行 Gradle，`./gradlew test`。
+- APK 索引记录：每个 APK 只用 dexlib2 解析一次，结果存在 `~/.cache/dexadapt/index`（小红书一个约 180 MB，读回来约 6 秒，
+  直接解析约 40 秒；最多留 8 个）。`DEXADAPT_CACHE` 改目录，设成 `off` 关掉。
 - 用真实 APK 的测试读 `DEXADAPT_SAMPLES`（默认 `~/projects/xhs-apks`），没有就跳过。
 - DexKit 相关测试需要桌面原生库：`scripts/build-dexkit-desktop.sh`（需要 git、cmake、ninja、clang）。
 - 开源库指纹库：`scripts/build-libdb.sh`（下载 Maven 构件，缓存在 `~/.cache/dexadapt/maven`）。

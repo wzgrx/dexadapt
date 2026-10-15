@@ -13,4 +13,8 @@ internal object OpcodeNames {
     }
 
     fun name(id: Byte): String = names[id.toInt() and 0xff]
+
+    /** 现有的名字（下标就是 id），写索引记录用。 */
+    @Synchronized
+    fun snapshot(): List<String> = names.toList()
 }
