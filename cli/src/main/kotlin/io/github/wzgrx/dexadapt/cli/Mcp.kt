@@ -116,7 +116,7 @@ object Mcp {
                     "initialize" -> result(id, initialize(params))
                     "ping" -> result(id, JsonObject(emptyMap()))
                     "tools/list" -> result(id, buildJsonObject { put("tools", JsonArray(TOOLS.map(::describe))) })
-                    "tools/call" -> result(id, call(params))
+                    "tools/call" -> result(id, call(params, output))
                     else -> error(id, -32601, "不支持的方法 $method")
                 }
             }.getOrElse { e -> error(id, -32603, e.message ?: e.toString()) }
@@ -151,7 +151,7 @@ object Mcp {
     }
 
     /** 跑一个工具：拼成命令行参数，捕获它打印的内容（标准输出是 MCP 的通道，不能让命令直接写）。 */
-    private fun call(params: JsonObject): JsonObject {
+    private fun call(params: JsonObject, channel: PrintStream): JsonObject {
         val name = params["name"]?.jsonPrimitive?.contentOrNull ?: error("缺少工具名")
         val tool = TOOLS.firstOrNull { it.name == name } ?: error("没有工具 $name")
         val args = params["arguments"] as? JsonObject ?: JsonObject(emptyMap())
@@ -177,18 +177,26 @@ object Mcp {
         }
         for (p in tool.params) if (p.required && p.name !in args) error("缺少参数 ${p.name}")
 
-        val buffer = ByteArrayOutputStream()
-        val code = synchronized(this) {
-            val saved = System.out
-            System.setOut(PrintStream(buffer, true, Charsets.UTF_8))
-            try {
-                runCatching { run(argv) }.getOrElse { e -> println("错误：" + (e.message ?: e.toString())); 2 }
-            } finally {
-                System.setOut(saved)
+        val progressToken = (params["_meta"] as? JsonObject)?.get("progressToken")
+        val (code, printed) = runIsolated(argv) { seconds ->
+            // 客户端给了进度令牌时，长任务（diff、matrix）每 10 秒报一次进度，免得客户端当它卡死超时
+            if (progressToken != null) {
+                send(
+                    channel,
+                    buildJsonObject {
+                        put("jsonrpc", "2.0")
+                        put("method", "notifications/progress")
+                        putJsonObject("params") {
+                            put("progressToken", progressToken)
+                            put("progress", seconds)
+                            put("message", "${tool.name} 运行中（$seconds 秒）")
+                        }
+                    },
+                )
             }
         }
         val text = buildString {
-            append(buffer.toString(Charsets.UTF_8))
+            append(printed)
             val report = tool.report?.let { r -> out?.let { File(it, r) } }?.takeIf { it.isFile }
             if (report != null) {
                 val body = report.readText()
@@ -203,6 +211,32 @@ object Mcp {
     }
 
     private const val REPORT_LIMIT = 60_000
+
+    /**
+     * 在子进程里跑命令行（同一个 JVM 程序、同样的类路径和内存上限），拿回它打印的内容和退出码。
+     * 为什么不在本进程里跑：标准输出是 MCP 的通道，DexKit 这类原生库会直接往标准输出写日志（绕过 System.out），
+     * 混进通道里客户端就解析不了；子进程也让一次调用内存爆掉、崩溃时不连累整个服务。索引有磁盘记录，子进程启动只多一两秒。
+     * 子进程的标准错误转到本进程的标准错误（客户端一般记进日志）。[tick] 每 10 秒调用一次（参数是已运行秒数）。
+     */
+    private fun runIsolated(argv: List<String>, tick: (Long) -> Unit): Pair<Int, String> {
+        val javaBin = ProcessHandle.current().info().command().orElse("java")
+        val cmd = listOf(
+            javaBin, "-Xmx${Runtime.getRuntime().maxMemory() / 1048576}m", "--enable-native-access=ALL-UNNAMED",
+            "-cp", System.getProperty("java.class.path"), "io.github.wzgrx.dexadapt.cli.MainKt",
+        ) + argv
+        val p = ProcessBuilder(cmd).redirectError(ProcessBuilder.Redirect.INHERIT).start()
+        p.outputStream.close()
+        val out = ByteArrayOutputStream()
+        val reader = Thread({ p.inputStream.use { it.copyTo(out) } }, "dexadapt-mcp-out").apply { isDaemon = true; start() }
+        val started = System.nanoTime()
+        while (!p.waitFor(10, java.util.concurrent.TimeUnit.SECONDS)) tick((System.nanoTime() - started) / 1_000_000_000)
+        reader.join()
+        // 原生库的日志行（I/DexKit: …）不算结果
+        val text = out.toString(Charsets.UTF_8).lines().filterNot { NATIVE_LOG.matches(it) }.joinToString("\n")
+        return p.exitValue() to text
+    }
+
+    private val NATIVE_LOG = Regex("^[VDIWEF]/\\w+: .*")
 
     private fun result(id: JsonElement, result: JsonObject) = buildJsonObject {
         put("jsonrpc", "2.0"); put("id", id); put("result", result)

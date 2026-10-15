@@ -21,3 +21,8 @@ application {
     applicationName = "dexadapt"
     applicationDefaultJvmArgs = listOf("-Xmx12g", "--enable-native-access=ALL-UNNAMED")
 }
+
+// MCP 服务的 serverInfo.version 读这里
+tasks.jar {
+    manifest { attributes("Implementation-Title" to "dexadapt", "Implementation-Version" to project.version) }
+}

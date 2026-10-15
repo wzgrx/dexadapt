@@ -78,11 +78,27 @@ jadx plugins --install-jar jadx-plugin/build/libs/dexadapt-jadx-plugin.jar
 
 在 jadx 里右键一个类、方法或字段 →“DexAdapt：生成查询”，查询（YAML）弹窗显示并复制到剪贴板。
 
-接到 Claude Code：
+接到 AI 助手（MCP，标准输入输出；任何支持 MCP 的客户端都能用，下面是常见的几种，字段以各客户端文档为准）：
 
 ```bash
-claude mcp add dexadapt -- /path/to/dexadapt/cli/build/install/dexadapt/bin/dexadapt mcp
+claude mcp add dexadapt -- /path/to/dexadapt/cli/build/install/dexadapt/bin/dexadapt mcp    # Claude Code
 ```
+
+```toml
+# Codex CLI：~/.codex/config.toml（diff、matrix 要几分钟，把工具超时调大）
+[mcp_servers.dexadapt]
+command = "/path/to/dexadapt/cli/build/install/dexadapt/bin/dexadapt"
+args = ["mcp"]
+tool_timeout_sec = 900
+```
+
+```json
+{ "mcpServers": { "dexadapt": { "command": "/path/to/dexadapt/cli/build/install/dexadapt/bin/dexadapt", "args": ["mcp"] } } }
+```
+
+最后这种写法用于 Cursor、Gemini CLI、Cline 等。工具有 inspect、resolve、matrix、diff、suggest、repair、libs、lint、export；
+每次调用在子进程里跑（原生库的日志不会混进通道），客户端带进度令牌时长任务每 10 秒报一次进度。给 AI 的使用说明见
+[AGENTS.md](AGENTS.md)。
 
 ## 在模块里用
 
