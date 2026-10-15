@@ -48,6 +48,10 @@ private const val USAGE = """dexadapt <命令> [参数]
   libs-db --out <指纹库.json.gz> [--lib <group:artifact=显示名> ...] [--add-to <已有指纹库>]
       从 Maven 仓库下载开源库的各个版本，建指纹库。不给 --lib 时收录内置的常用库列表。
 
+  lint --spec <spec.yaml> [--apk <安装包> ...]
+      检查 spec 的写法：引用、成环、只靠形状、按混淆名找、手机上要全量扫描的查询、重复的查询；给了安装包再查
+      两个符号命中同一个成员、契约对不上、解析不到。有错误时退出码 3。
+
   codegen --spec <spec.yaml> --package <包名> [--class <类名>] --out <输出.kt>
       生成类型化访问器（Kotlin）：access.<组>.<成员>(...)，代替按名字反射；找不到的符号抛 SymbolUnavailable。
 
@@ -98,6 +102,7 @@ fun run(args: List<String>): Int {
         "libs-db" -> libsDb(opts)
         "mcp" -> { Mcp.serve(); 0 }
         "codegen" -> codegen(opts)
+        "lint" -> lint(opts)
         "keygen" -> keygen(opts)
         "import" -> importFingerprints(opts)
         "sign" -> sign(opts)
@@ -262,6 +267,21 @@ private fun sign(opts: Opts): Int {
         println("${t.path}.sig")
     }
     return 0
+}
+
+private fun lint(opts: Opts): Int {
+    val spec = Spec.read(File(opts.need("spec")))
+    val issues = ArrayList(io.github.wzgrx.dexadapt.spec.SpecLint.check(spec.catalog))
+    for (apk in opts.all("apk")) {
+        Engines.open(File(apk), Engine.DEXLIB).use { o ->
+            val table = SymbolResolver(o.source, o.info.versionCode).table(spec.catalog.symbols)
+            issues += io.github.wzgrx.dexadapt.spec.SpecLint.check(spec.catalog, table, o.info.label)
+        }
+    }
+    val byLevel = issues.groupBy { it.level }
+    for (level in io.github.wzgrx.dexadapt.spec.SpecLint.Level.entries) byLevel[level].orEmpty().sortedBy { it.id }.forEach { println(it) }
+    println("${spec.catalog.symbols.size} 个符号：错误 ${byLevel[io.github.wzgrx.dexadapt.spec.SpecLint.Level.ERROR]?.size ?: 0}，警告 ${byLevel[io.github.wzgrx.dexadapt.spec.SpecLint.Level.WARNING]?.size ?: 0}，提示 ${byLevel[io.github.wzgrx.dexadapt.spec.SpecLint.Level.HINT]?.size ?: 0}")
+    return if (byLevel.containsKey(io.github.wzgrx.dexadapt.spec.SpecLint.Level.ERROR)) 3 else 0
 }
 
 private fun codegen(opts: Opts): Int {

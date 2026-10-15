@@ -90,6 +90,10 @@ object Mcp {
             positional = listOf("apk"), report = "libs.md", defaultOut = "dexadapt-libs",
         ),
         Tool(
+            "lint", "检查 spec 的写法（引用、成环、只靠形状、按混淆名找、手机上要全量扫描的查询）；给了安装包再查同组重复命中、契约、解析不到。",
+            listOf(Param("spec", "string", "spec 文件", true), Param("apk", "array", "安装包（可多个）")),
+        ),
+        Tool(
             "export", "spec 转换格式（YAML ⇄ JSON）。",
             listOf(Param("spec", "string", "输入 spec", true), Param("out", "string", "输出文件（.yaml / .json）", true)),
         ),
