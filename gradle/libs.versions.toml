@@ -11,7 +11,7 @@ junit = "4.13.2"
 apksig = "9.4.1"
 snakeyamlEngine = "3.2"
 # 读开源库官方 jar（开源库识别）
-asm = "9.9.1"
+asm = "9.11.1"
 # Hook 框架（只在编译 hooks 模块时用，compileOnly，不打进使用方）
 libxposed = "102.0.0"
 xposedApi = "82"

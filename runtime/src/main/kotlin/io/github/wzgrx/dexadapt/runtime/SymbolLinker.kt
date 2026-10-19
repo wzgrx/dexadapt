@@ -10,8 +10,11 @@ import java.lang.reflect.Executable
 import java.lang.reflect.Field
 import java.util.concurrent.ConcurrentHashMap
 
-/** 某个符号在当前宿主上用不了（没适配、没找到、签名对不上）。 */
-class SymbolUnavailable(val symbolId: String, reason: String) : Exception("$symbolId: $reason")
+/**
+ * 某个符号在当前宿主上用不了（没适配、没找到、签名对不上）。[absent] 为 true 时是这个版本本来就没有（[SymbolTable.absent]），
+ * 不是适配失败：界面上应显示“这个版本没有”，不该报错。
+ */
+class SymbolUnavailable(val symbolId: String, reason: String, val absent: Boolean = false) : Exception("$symbolId: $reason")
 
 /**
  * 宿主进程里把符号表变成反射对象：按表里的位置用宿主的 ClassLoader 加载，核对返回值 / 字段类型，结果缓存。
@@ -34,6 +37,7 @@ class SymbolLinker(
 ) {
     private class State(val table: SymbolTable?) {
         val cache = ConcurrentHashMap<String, Result<Any>>()
+        val absent: Set<String> = table?.absent?.toHashSet().orEmpty()
         /** 反查：查出来的 Class / Executable / Field → 符号 id。 */
         val ids = ConcurrentHashMap<Any, String>()
     }
@@ -62,6 +66,9 @@ class SymbolLinker(
             }
         }.apply { isAccessible = true }
     } as Executable
+
+    /** [symbol] 是这个版本本来就没有的（[SymbolTable.absent]），不是没适配上。 */
+    fun absent(symbol: Symbol): Boolean = symbol.id in state.absent
 
     fun methodOrNull(symbol: MethodSymbol): Executable? = runCatching { method(symbol) }.getOrNull()
 
@@ -95,6 +102,7 @@ class SymbolLinker(
         return s.cache.getOrPut(symbol.id) {
             runCatching {
                 val t = s.table ?: throw SymbolUnavailable(symbol.id, unsupported)
+                if (symbol.id in s.absent) throw SymbolUnavailable(symbol.id, "这个版本没有", absent = true)
                 val entry = t.entries[symbol.id]
                     ?: t.guesses[symbol.id]?.takeIf { useGuess(symbol.id) }?.at?.also { log("symbol ${symbol.id} uses a guessed location: ${t.guesses[symbol.id]?.how}") }
                     ?: throw SymbolUnavailable(symbol.id, t.missing[symbol.id]?.let { "未找到（$it）" } ?: "符号表中没有")

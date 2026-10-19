@@ -175,6 +175,7 @@ val hide: Method? = symbols.methodOrNull(FeedCopy.hide)  // 可选符号
 ### 5.3 稳：脆弱度量化与门禁
 
 - **余量**：逐个去掉查询里的一个条件，看是否还唯一。只靠一个条件撑着的叫“单点依赖”，只靠形状的最危险；
+  类查询里的方法条件按子条件算（`methods[0].strings["x"]`、`methods[0].params` …），方法里有字符串这类锚撑着就不算只靠形状；
 - **版本矩阵**：同一 spec 在 N 个历史版本上跑，统计每个符号的解析情况和漂移（位置变化）；
 - **CI 门禁**：新加的查询必须在全部样本版本上唯一命中，且不能是“仅靠形状的单点依赖”；
 - 健康分：每个符号一个分数（锚的数量和强度、余量、历史版本通过率），功能级汇总。
@@ -285,8 +286,15 @@ M1～M8 全部完成，第一个使用方是红薯助手（小红书），微信
 | 10.10 原生层 | `Elf`（读 .so 导出 / 导入 / 依赖，和 readelf 一致）+ `NativeDiff`（升级报告的原生库一节） |
 | 10.10 加固 / 动态加载 | `DexKitScan.ofClassLoader` / `ofDexBytes`：从内存 dex 解析，结果和读安装包逐条相同 |
 
-整个设计（M1–M8 + 第 10、11 节）全部完成；下一步是接新宿主时的 CI 一条龙（10.7：diff → matrix → repair → PR），
-以及把微信接进来（原 x-clean-harness 的 spec 在 `specs/wechat-legacy/`）。
+0.2.0（2026-10-19）：
+
+| 设计点 | 结果 |
+|---|---|
+| 10.7 一条龙 | `dexadapt upgrade`：diff → matrix → repair，写 `summary.md` 当 PR 说明；GitHub Actions 每次推送编译、跑测试 |
+| 运行时“这个版本没有” | `SymbolTable.absent` + `SymbolLinker.absent`：`absentIn` 的符号不算适配失败（0.2.0，从哔哩净界收上来） |
+
+整个设计（M1–M8 + 第 10、11 节）全部完成。还没做的：样本 APK 不进仓库，CI 上跑不了 `upgrade`，开 PR 这一步在本机手动
+（`gh pr create -F summary.md`）；把微信接进来（原 x-clean-harness 的 spec 在 `specs/wechat-legacy/`）。
 
 ## 9. 风险与边界
 

@@ -37,9 +37,13 @@ private const val USAGE = """dexadapt <命令> [参数]
       给一个目标自动写查询：挑出能让它唯一、最稳的特征组合（稀有字符串、源文件名、字段名、注解、稳定 API 调用、形状），
       要求在 --other 给的别的版本里也唯一命中。输出 YAML。
 
-  repair --spec <spec.yaml> --old <旧安装包> --new <新安装包> [--id <符号 id> ...]
+  repair --spec <spec.yaml> --old <旧安装包> --new <新安装包> [--old-build <标识>] [--new-build <标识>] [--id <符号 id> ...]
       新版找不到的符号：诊断是哪个条件不满足，给出修好的查询（逐个放宽条件，或按混淆映射找到新位置重新生成），
       每条都在新旧两版验证过。不给 --id 时修全部找不到的。
+
+  upgrade --spec <spec.yaml> --old <旧安装包> --new <新安装包> [--apk <别的样本> ...] [--old-build <标识>] [--new-build <标识>] [--out <目录>]
+      新版本一条龙：diff → matrix（旧版、新版和别的样本）→ repair，写 diff/、matrix/、repair.md 和 summary.md
+      （可以直接当更新 spec 的 PR 说明）。新版全部解析到时退出码 0，否则 3。很慢（diff 和 matrix 各几分钟），一次只跑一个。
 
   libs <安装包> [--db <指纹库>] [--out <目录>]
       认出打包的开源库（OkHttp、Retrofit、RxJava、Gson、协程……）：版本、混淆后的类对应库里的哪个类、包被改到了哪里。
@@ -104,6 +108,7 @@ fun run(args: List<String>): Int {
         "diff" -> diff(opts)
         "suggest" -> suggest(opts)
         "repair" -> repair(opts)
+        "upgrade" -> upgrade(opts)
         "libs" -> libs(opts)
         "libs-db" -> libsDb(opts)
         "mcp" -> { Mcp.serve(); 0 }
@@ -175,7 +180,12 @@ private fun resolve(opts: Opts): Int {
     }
 }
 
-private fun matrix(opts: Opts): Int {
+private fun matrix(opts: Opts): Int = runMatrix(opts).code
+
+/** 一次 matrix 的结果（[upgrade] 汇总用）。 */
+private class MatrixRun(val code: Int, val tables: Map<Build, SymbolTable>, val margins: Map<Long, List<SymbolMargin>>)
+
+private fun runMatrix(opts: Opts): MatrixRun {
     val spec = Spec.read(File(opts.need("spec")))
     val apks = opts.all("apk").ifEmpty { error("至少给一个 --apk") }.map(::File)
     val channels = opts.all("channel").associate { it.substringBeforeLast('=') to it.substringAfterLast('=') }
@@ -210,10 +220,15 @@ private fun matrix(opts: Opts): Int {
     File(out, "matrix.html").writeText(Matrix.html(tables, margins))
     parity.forEach(::println)
     println("输出在 ${out.path}/（tables/、margin.json、matrix.md、matrix.html）")
-    return if (failed) 3 else 0
+    return MatrixRun(if (failed) 3 else 0, tables, margins)
 }
 
 private fun diff(opts: Opts): Int {
+    runDiff(opts)
+    return 0
+}
+
+private fun runDiff(opts: Opts): io.github.wzgrx.dexadapt.diff.DiffReport {
     val (oldPath, newPath) = opts.positional.takeIf { it.size >= 2 }?.let { File(it[0]) to File(it[1]) } ?: error("用法：dexadapt diff <旧安装包> <新安装包>")
     val out = File(opts.get("out") ?: "dexadapt-diff").apply { mkdirs() }
     val spec = opts.get("spec")?.let { Spec.read(File(it)) }
@@ -246,9 +261,9 @@ private fun diff(opts: Opts): Int {
             println("配上 ${m.matched}/${m.oldClasses} 个类、${m.methods} 对方法（${(System.currentTimeMillis() - started) / 1000} 秒）")
             symbols?.counts?.let { println("模块符号：" + it.entries.joinToString("，") { (k, v) -> "$k $v" }) }
             println("输出在 ${out.path}/（report.md、report.html、report.json、mapping.txt）")
+            return report
         }
     }
-    return 0
 }
 
 private fun keygen(opts: Opts): Int {
@@ -438,18 +453,28 @@ private fun suggest(opts: Opts): Int {
 }
 
 private fun repair(opts: Opts): Int {
+    val r = runRepair(opts)
+    print(r.text)
+    return r.code
+}
+
+/** 一次 repair 的结果：打印的内容、找不到的个数、修好的个数。 */
+private class RepairRun(val code: Int, val text: String, val broken: Int, val fixed: Int)
+
+private fun runRepair(opts: Opts): RepairRun {
     val spec = Spec.read(File(opts.need("spec")))
+    val text = StringBuilder()
     Engines.open(File(opts.need("old")), Engine.DEXLIB).use { a ->
         Engines.open(File(opts.need("new")), Engine.DEXLIB).use { b ->
-            val tb = SymbolResolver(b.source, b.info.versionCode).table(spec.catalog.symbols)
+            val tb = SymbolResolver.forBuild(b.source, b.info.versionCode, opts.get("new-build")).table(spec.catalog.symbols)
             val wanted = opts.all("id").toSet()
             val broken = spec.catalog.symbols.filter { it.id in tb.missing && (wanted.isEmpty() || it.id in wanted) }
-            if (broken.isEmpty()) { println("新版里 spec 的符号都能解析，不用修"); return 0 }
+            if (broken.isEmpty()) return RepairRun(0, "新版里 spec 的符号都能解析，不用修\n", 0, 0)
             val ia = a.source as? io.github.wzgrx.dexadapt.dexlib.DexIndex
             val ib = b.source as? io.github.wzgrx.dexadapt.dexlib.DexIndex
             // 有映射时用它推测新位置（放宽条件修不好的靠它）。
             val mapping = if (ia != null && ib != null) io.github.wzgrx.dexadapt.diff.ClassMatcher(ia, ib).run() else null
-            val ta = SymbolResolver(a.source, a.info.versionCode).table(spec.catalog.symbols)
+            val ta = SymbolResolver.forBuild(a.source, a.info.versionCode, opts.get("old-build")).table(spec.catalog.symbols)
             val diff = mapping?.let { io.github.wzgrx.dexadapt.diff.SymbolDiff.of(ta, tb, it) }
             val repair = io.github.wzgrx.dexadapt.synth.Repair(a.source, b.source)
             var fixed = 0
@@ -457,14 +482,66 @@ private fun repair(opts: Opts): Int {
                 val guessText = diff?.rows?.firstOrNull { it.id == s.id }?.guess
                 val guess = guessText?.takeIf { '?' !in it }?.let { runCatching { target(it, b.source) }.getOrNull() }
                 val fix = repair.repair(s, guess)
-                println("## ${s.id}\n诊断：${fix.diagnosis}\n处理：${fix.action}" + (fix.newLocation?.let { "\n新位置：$it" } ?: ""))
-                fix.yaml?.let { println(it); fixed++ }
-                println()
+                text.appendLine("## ${s.id}\n诊断：${fix.diagnosis}\n处理：${fix.action}" + (fix.newLocation?.let { "\n新位置：$it" } ?: ""))
+                fix.yaml?.let { text.appendLine(it); fixed++ }
+                text.appendLine()
             }
-            println("找不到 ${broken.size} 个，给出修复 $fixed 个")
-            return if (fixed == broken.size) 0 else 3
+            text.appendLine("找不到 ${broken.size} 个，给出修复 $fixed 个")
+            return RepairRun(if (fixed == broken.size) 0 else 3, text.toString(), broken.size, fixed)
         }
     }
+}
+
+/**
+ * 新版本一条龙（设计 10.7）：diff 出升级报告 → matrix 在旧版、新版（和 --apk 给的别的样本）上解析，出余量和矩阵 →
+ * 新版找不到的跑 repair → 写 summary.md（可以直接当更新 spec 的 PR 说明）。新版全部解析到时退出码 0，否则 3。
+ */
+private fun upgrade(opts: Opts): Int {
+    val spec = opts.need("spec")
+    val old = opts.need("old")
+    val new = opts.need("new")
+    val out = File(opts.get("out") ?: "dexadapt-upgrade").apply { mkdirs() }
+    fun pass(vararg keys: String) = keys.flatMap { k -> opts.all(k).flatMap { listOf("--$k", it) } }
+    println("== 1/3 升级分析")
+    val report = runDiff(Opts(listOf(old, new, "--spec", spec) + pass("old-build", "new-build", "db") + listOf("--out", File(out, "diff").path)))
+    println("== 2/3 版本矩阵")
+    val apks = (listOf(old, new) + opts.all("apk")).distinct()
+    // 矩阵按渠道_版本号认构建：给了 --old-build / --new-build（例如 CN_9500803）时旧版、新版的渠道照它，钉子和“没有”的标注才对得上
+    val derived = listOf(old to opts.get("old-build"), new to opts.get("new-build"))
+        .mapNotNull { (apk, b) -> b?.takeIf { '_' in it }?.let { "$apk=" + it.substringBeforeLast('_').lowercase() } }
+    val channels = (derived + opts.all("channel")).flatMap { listOf("--channel", it) }
+    val m = runMatrix(Opts(listOf("--spec", spec) + apks.flatMap { listOf("--apk", it) } + channels + listOf("--out", File(out, "matrix").path)))
+    println("== 3/3 修复")
+    val r = runRepair(Opts(listOf("--spec", spec, "--old", old, "--new", new) + pass("old-build", "new-build")))
+    File(out, "repair.md").writeText(r.text)
+    print(r.text)
+    val summary = buildString {
+        appendLine("# 适配 ${report.pkg.new}（从 ${report.pkg.old} 升级）")
+        appendLine()
+        appendLine("由 `dexadapt upgrade` 生成。详细报告：`diff/report.html`、`matrix/matrix.html`、`repair.md`。")
+        appendLine()
+        report.symbols?.counts?.let { c ->
+            appendLine("## 模块符号")
+            appendLine()
+            appendLine(c.entries.sortedBy { it.key.ordinal }.joinToString("，") { (k, v) -> "$k $v" })
+            appendLine()
+        }
+        appendLine("## 各版本解析")
+        appendLine()
+        appendLine("| 版本 | versionCode | 解析到 | 缺失 | 单点依赖 | 其中仅靠形状 |")
+        appendLine("|---|---|---|---|---|---|")
+        for ((b, t) in m.tables) {
+            val sp = m.margins[b.versionCode].orEmpty().filter { it.singlePoint }
+            appendLine("| ${b.label} | ${b.versionCode} | ${t.entries.size} | ${t.missing.size} | ${sp.size} | ${sp.count { it.shapeOnly }} |")
+        }
+        appendLine()
+        appendLine("## 修复")
+        appendLine()
+        appendLine(if (r.broken == 0) "新版里全部符号都能解析。" else "新版找不到 ${r.broken} 个，给出修复 ${r.fixed} 个（见 `repair.md`，每条都在新旧两版验证过；合进 spec 前再跑一次 `lint` 和 `matrix`）。")
+    }
+    File(out, "summary.md").writeText(summary)
+    println("汇总：${File(out, "summary.md").path}")
+    return if (r.broken == 0 && m.code == 0) 0 else 3
 }
 
 private fun importFingerprints(opts: Opts): Int {

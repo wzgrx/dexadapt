@@ -23,7 +23,7 @@ abstract class AarClasses : TransformAction<TransformParameters.None> {
 }
 
 val artifactType = Attribute.of("artifactType", String::class.java)
-val aar: Configuration by configurations.creating { isTransitive = false }
+val aar: Configuration = configurations.create("aar") { isTransitive = false }
 
 dependencies {
     registerTransform(AarClasses::class) {

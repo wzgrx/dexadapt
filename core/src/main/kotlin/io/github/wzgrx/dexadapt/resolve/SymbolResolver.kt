@@ -38,6 +38,9 @@ class SymbolResolver(
     class Unresolved(message: String) : Exception(message)
 
     companion object {
+        /** 标了 [io.github.wzgrx.dexadapt.absentIn] 的符号在这个构建里的“解析失败”原因。 */
+        const val ABSENT = "absent in this build (absentIn)"
+
         /** 超过这么久的符号记一笔，方便找出手机上慢的查询。 */
         private const val SLOW_MS = 1500L
     }
@@ -46,6 +49,7 @@ class SymbolResolver(
         val entries = sortedMapOf<String, Resolved>()
         val missing = sortedMapOf<String, String>()
         source.prefetchStrings(queryStrings(symbols.filterNot(skip)))
+        val absent = symbols.filter(skip).map { it.id }.distinct().sorted()
         symbols.forEachIndexed { i, s ->
             val started = System.nanoTime()
             if (!skip(s)) resolve(s).fold({ entries[s.id] = it }, { missing[s.id] = it.message ?: it.toString() })
@@ -53,7 +57,7 @@ class SymbolResolver(
             if (ms >= SLOW_MS) log("  ${s.id}: ${ms}ms")
             onProgress(i + 1, symbols.size)
         }
-        return SymbolTable(versionCode, source.dexSha256, entries, missing)
+        return SymbolTable(versionCode, source.dexSha256, entries, missing, absent)
     }
 
     /**
@@ -68,6 +72,7 @@ class SymbolResolver(
         val entries = sortedMapOf<String, Resolved>()
         val missing = sortedMapOf<String, String>()
         source.prefetchStrings(queryStrings(all.filterNot(skip)))
+        val absent = all.filter(skip).map { it.id }.sorted()
         var count = 0
         stages.forEachIndexed { i, stage ->
             for (s in stage) {
@@ -75,9 +80,9 @@ class SymbolResolver(
                 if (!skip(s)) resolve(s).fold({ entries[s.id] = it }, { missing[s.id] = it.message ?: it.toString() })
                 onProgress(++count, all.size)
             }
-            if (i < stages.lastIndex) onStage(SymbolTable(versionCode, source.dexSha256, entries.toSortedMap(), missing.toSortedMap(), partial = true))
+            if (i < stages.lastIndex) onStage(SymbolTable(versionCode, source.dexSha256, entries.toSortedMap(), missing.toSortedMap(), absent, partial = true))
         }
-        return SymbolTable(versionCode, source.dexSha256, entries, missing)
+        return SymbolTable(versionCode, source.dexSha256, entries, missing, absent)
     }
 
     /** 查询里用来找起点的字符串（类查询的 strings、方法查询的 shape.strings）；类查询里方法形状的字符串只用来核对，不预取。 */
@@ -98,7 +103,7 @@ class SymbolResolver(
         resolving += symbol.id
         val result = try {
             runCatching {
-                if (skip(symbol)) throw Unresolved("absent in this build (absentIn)")
+                if (skip(symbol)) throw Unresolved(ABSENT)
                 SymbolGraph.nullReference(symbol)?.let { throw Unresolved(it) }
                 when (val pin = pinFor(symbol)) {
                     null -> when (symbol) {
@@ -168,7 +173,7 @@ class SymbolResolver(
      */
     fun margin(symbol: Symbol): SymbolMargin? {
         if (pinFor(symbol) != null || skip(symbol) || resolve(symbol).isFailure) return null
-        val variants = SymbolMargin.variants(symbol)
+        val variants = SymbolMargin.marginVariants(symbol)
         if (variants.isEmpty()) return null
         return SymbolMargin(symbol.id, variants.map { (label, q) -> SymbolMargin.Drop(label, count(q)) })
     }

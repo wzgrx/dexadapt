@@ -5,6 +5,7 @@ import io.github.wzgrx.dexadapt.ClassSymbol
 import io.github.wzgrx.dexadapt.FieldQuery
 import io.github.wzgrx.dexadapt.FieldSymbol
 import io.github.wzgrx.dexadapt.MethodQuery
+import io.github.wzgrx.dexadapt.MethodShape
 import io.github.wzgrx.dexadapt.MethodSymbol
 import io.github.wzgrx.dexadapt.Symbol
 import io.github.wzgrx.dexadapt.TypeRef
@@ -34,7 +35,7 @@ data class SymbolMargin(val id: String, val drops: List<Drop>) {
      * 唯一性靠的是一个纯形状条件（类型、参数、返回值、静态、父类、包……），不是字符串、调用关系这类“锚”：
      * 这种最容易在下个版本被一个新加的同形状成员打破。
      */
-    val shapeOnly: Boolean get() = critical.any { d -> ANCHORS.none { d.constraint.startsWith(it) } }
+    val shapeOnly: Boolean get() = critical.any { !isAnchor(it.constraint) }
 
     companion object {
         const val UNBOUNDED = Int.MAX_VALUE
@@ -46,8 +47,23 @@ data class SymbolMargin(val id: String, val drops: List<Drop>) {
             "fieldNames[", "fieldOf", "samePackageAs", "excludes[", "sourceFile", "annotations[", "numbers[",
         )
 
-        /** [label]（[variants] 给的条件说明）是不是“锚”条件（字符串、调用关系等，去掉它查询就失去起点）。 */
-        fun isAnchor(label: String): Boolean = ANCHORS.any { label.startsWith(it) }
+        /** 类查询里第 i 个方法条件的子条件前缀，例如 `methods[0].strings["x"]`。 */
+        private val METHOD_PART = Regex("""^methods\[\d+]\.""")
+
+        /**
+         * [label]（[variants] 给的条件说明）是不是“锚”条件（字符串、调用关系等，去掉它查询就失去起点）。
+         * 类查询里方法条件的子条件（`methods[0].strings[...]`）按子条件本身算。
+         */
+        fun isAnchor(label: String): Boolean = label.replace(METHOD_PART, "").let { l -> ANCHORS.any { l.startsWith(it) } }
+
+        /**
+         * 余量分析用的变体：类查询里的一个方法条件能拆成子条件时，只去掉子条件、不整条去掉——
+         * 整条去掉总是不唯一（类就是靠这个方法找的），说明不了方法条件里有没有字符串这类锚撑着。
+         */
+        fun marginVariants(symbol: Symbol): List<Pair<String, Any>> {
+            val all = variants(symbol)
+            return all.filterNot { (label, _) -> label.startsWith("methods[") && '.' !in label && all.any { it.first.startsWith("$label.") } }
+        }
 
         /** [symbol] 的查询逐个去掉一个条件后的变体（条件说明 to 变体查询）。 */
         fun variants(symbol: Symbol): List<Pair<String, Any>> = when (symbol) {
@@ -74,7 +90,11 @@ data class SymbolMargin(val id: String, val drops: List<Drop>) {
             q.strings.forEachIndexed { i, s -> add("strings[\"$s\"]" to q.copy(strings = q.strings.without(i))) }
             q.fieldTypes.forEachIndexed { i, t -> add("fieldTypes[${ref(t)}]" to q.copy(fieldTypes = q.fieldTypes.without(i))) }
             q.fieldNames.forEachIndexed { i, n -> add("fieldNames[$n]" to q.copy(fieldNames = q.fieldNames.without(i))) }
-            q.methods.forEachIndexed { i, _ -> add("methods[$i]" to q.copy(methods = q.methods.without(i))) }
+            q.methods.forEachIndexed { i, m ->
+                // 先去方法条件里的子条件（更细，诊断更准），最后才整条去掉
+                for ((label, s) in shapeVariants(m)) add("methods[$i].$label" to q.copy(methods = q.methods.mapIndexed { j, o -> if (j == i) s else o }))
+                add("methods[$i]" to q.copy(methods = q.methods.without(i)))
+            }
             q.isInterface?.let { add("isInterface" to q.copy(isInterface = null)) }
             q.isAbstract?.let { add("isAbstract" to q.copy(isAbstract = null)) }
             q.samePackageAs?.let { add("samePackageAs" to q.copy(samePackageAs = null)) }
@@ -88,19 +108,24 @@ data class SymbolMargin(val id: String, val drops: List<Drop>) {
         private fun methodVariants(q: MethodQuery): List<Pair<String, Any>> = buildList {
             val s = q.shape
             if (q.owner == null) q.packagePrefix?.let { add("packagePrefix" to q.copy(packagePrefix = null)) }
-            s.params?.let { add("params" to q.copy(shape = s.copy(params = null))) }
-            s.returns?.let { add("returns" to q.copy(shape = s.copy(returns = null))) }
-            s.isStatic?.let { add("isStatic" to q.copy(shape = s.copy(isStatic = null))) }
-            s.strings.forEachIndexed { i, str -> add("strings[\"$str\"]" to q.copy(shape = s.copy(strings = s.strings.without(i)))) }
-            s.numbers.forEachIndexed { i, n -> add("numbers[$n]" to q.copy(shape = s.copy(numbers = s.numbers.without(i)))) }
-            s.annotations.forEachIndexed { i, a -> add("annotations[\"$a\"]" to q.copy(shape = s.copy(annotations = s.annotations.without(i)))) }
-            if (s.opcodes.isNotEmpty()) add("opcodes" to q.copy(shape = s.copy(opcodes = emptyList())))
+            for ((label, shape) in shapeVariants(s)) add(label to q.copy(shape = shape))
             q.calls.forEachIndexed { i, m -> add("calls[${m.id}]" to q.copy(calls = q.calls.without(i))) }
             q.callsExact.forEachIndexed { i, c -> add("callsExact[$c]" to q.copy(callsExact = q.callsExact.without(i))) }
             q.usesFields.forEachIndexed { i, f -> add("usesFields[${f.id}]" to q.copy(usesFields = q.usesFields.without(i))) }
             if (q.onlyTheseFields) add("onlyTheseFields" to q.copy(onlyTheseFields = false))
             q.excludes.forEachIndexed { i, m -> add("excludes[${m.id}]" to q.copy(excludes = q.excludes.without(i))) }
             q.calledBy.forEachIndexed { i, m -> add("calledBy[${m.id}]" to q.copy(calledBy = q.calledBy.without(i))) }
+        }
+
+        /** 方法形状逐个去掉一个条件（名字是身份，不去）。 */
+        private fun shapeVariants(s: MethodShape): List<Pair<String, MethodShape>> = buildList {
+            s.params?.let { add("params" to s.copy(params = null)) }
+            s.returns?.let { add("returns" to s.copy(returns = null)) }
+            s.isStatic?.let { add("isStatic" to s.copy(isStatic = null)) }
+            s.strings.forEachIndexed { i, str -> add("strings[\"$str\"]" to s.copy(strings = s.strings.without(i))) }
+            s.numbers.forEachIndexed { i, n -> add("numbers[$n]" to s.copy(numbers = s.numbers.without(i))) }
+            s.annotations.forEachIndexed { i, a -> add("annotations[\"$a\"]" to s.copy(annotations = s.annotations.without(i))) }
+            if (s.opcodes.isNotEmpty()) add("opcodes" to s.copy(opcodes = emptyList()))
         }
 
         private fun fieldVariants(q: FieldQuery): List<Pair<String, Any>> = buildList {

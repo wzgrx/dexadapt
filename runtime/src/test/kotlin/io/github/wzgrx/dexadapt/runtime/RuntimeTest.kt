@@ -51,6 +51,18 @@ class RuntimeTest {
     }
 
     @Test
+    fun `linker tells symbols absent in this build from unresolved ones`() {
+        val gone = ClassSymbol("t.gone", ClassQuery(strings = listOf("x")))
+        val lost = ClassSymbol("t.lost", ClassQuery(strings = listOf("y")))
+        val linker = SymbolLinker(SymbolTable(1, "", emptyMap(), mapOf("t.lost" to "no match"), absent = listOf("t.gone")), javaClass.classLoader)
+        assertTrue(linker.absent(gone))
+        assertTrue(!linker.absent(lost))
+        val e = runCatching { linker.clazz(gone) }.exceptionOrNull() as SymbolUnavailable
+        assertTrue(e.absent)
+        assertTrue(!(runCatching { linker.clazz(lost) }.exceptionOrNull() as SymbolUnavailable).absent)
+    }
+
+    @Test
     fun `self check compares entry by entry`() {
         val a = Resolved.Class("x.A")
         val bundled = SymbolTable(1, "", mapOf("s1" to a, "s2" to Resolved.Class("x.B"), "s3" to Resolved.Class("x.C")))

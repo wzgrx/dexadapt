@@ -81,8 +81,18 @@ object Mcp {
             "repair", "新版找不到的符号：诊断哪个条件不满足，给出修好的查询（在新旧两版都验证过）；输出 YAML。",
             listOf(
                 Param("spec", "string", "spec 文件", true), Param("old", "string", "旧安装包", true), Param("new", "string", "新安装包", true),
+                Param("old_build", "string", "旧版构建标识"), Param("new_build", "string", "新版构建标识"),
                 Param("id", "array", "只修这些符号"),
             ),
+        ),
+        Tool(
+            "upgrade", "新版本一条龙：diff → matrix（旧版、新版和 apk 给的别的样本）→ repair，返回 summary.md（可当更新 spec 的 PR 说明）；详细报告在 out 目录。很慢（十分钟级）。",
+            listOf(
+                Param("spec", "string", "spec 文件", true), Param("old", "string", "旧安装包", true), Param("new", "string", "新安装包", true),
+                Param("apk", "array", "别的样本安装包"), Param("channel", "array", "安装包=渠道"),
+                Param("old_build", "string", "旧版构建标识"), Param("new_build", "string", "新版构建标识"), Param("out", "string", "输出目录"),
+            ),
+            report = "summary.md", defaultOut = "dexadapt-upgrade",
         ),
         Tool(
             "libs", "认出打包的开源库（OkHttp、Retrofit、RxJava、Gson、协程……）：版本、混淆后的类对应库里的哪个类、包被改到哪里。",

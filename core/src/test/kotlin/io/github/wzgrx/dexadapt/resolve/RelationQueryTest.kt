@@ -96,6 +96,20 @@ class RelationQueryTest {
     }
 
     @Test
+    fun `margin splits a class query's method condition into its parts`() {
+        // 类靠一个方法找：整条去掉方法条件总是不唯一，看不出方法条件里有没有锚；拆成子条件后才看得出
+        val timerCls = ClassSymbol("t.timer", ClassQuery(methods = listOf(MethodShape(returns = type("void"), strings = listOf("OnLocationSuccess")))))
+        val m = resolver().margin(timerCls)!!
+        assertEquals(listOf("methods[0].returns", "methods[0].strings[\"OnLocationSuccess\"]"), m.drops.map { it.constraint })
+        assertEquals(listOf("methods[0].strings[\"OnLocationSuccess\"]"), m.critical.map { it.constraint })
+        assertFalse(m.shapeOnly) // 撑着唯一性的是方法里的字符串
+        // 修复、推测仍然可以整条去掉方法条件
+        assertTrue(SymbolMargin.variants(timerCls).any { it.first == "methods[0]" })
+        assertTrue(SymbolMargin.isAnchor("methods[3].calls[x]"))
+        assertFalse(SymbolMargin.isAnchor("methods[0].params"))
+    }
+
+    @Test
     fun `string prefetch gets every start string once and multi source prefers the first apk`() {
         val asked = ArrayList<Collection<String>>()
         val counting = object : SymbolSource by source {

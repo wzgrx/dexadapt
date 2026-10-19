@@ -9,6 +9,7 @@ import io.github.wzgrx.dexadapt.MethodShape
 import io.github.wzgrx.dexadapt.MethodSymbol
 import io.github.wzgrx.dexadapt.Pin
 import io.github.wzgrx.dexadapt.Resolved
+import io.github.wzgrx.dexadapt.SymbolTable
 import io.github.wzgrx.dexadapt.Symbol
 import io.github.wzgrx.dexadapt.TypeRef
 import io.github.wzgrx.dexadapt.type
@@ -93,7 +94,10 @@ class SymbolResolverTest {
         assertTrue(r.resolve(setSpeedAll).exceptionOrNull()!!.message!!.contains("depends on t.player"))
         val table = r.table(listOf(playerCls, setSpeedAll))
         assertTrue("t.player" !in table.missing) // 本身跳过的不算缺
+        assertEquals(listOf("t.player"), table.absent) // 记成“这个版本没有”，运行时据此区分
         assertTrue("t.setSpeedAll" in table.missing)
+        assertEquals(table, SymbolTable.fromJson(table.toJson()))
+        assertTrue("absent" !in resolver().table(listOf(playerCls)).toJson()) // 没有时 JSON 不变
     }
 
     @Test

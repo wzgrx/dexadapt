@@ -4,8 +4,13 @@
 DexAdapt 让 Hook 点只写一次、跟着版本走：升级时告诉你变了什么、哪里会坏，坏了直接给出修好的查询；
 用户手机上的宿主升级了，模块当场重新适配，不用等发版。
 
-第一个使用方是 [红薯助手](https://github.com/wzgrx/redbook-helper-offline)（小红书模块：550 个 Hook 点，国内版和
-Google Play 版共 4 个内置版本）。设计方案见 [docs/DESIGN.md](docs/DESIGN.md)，查询语法见 [docs/SPEC.md](docs/SPEC.md)。
+使用方：
+
+- [红薯助手](https://github.com/wzgrx/redbook-helper-offline)（小红书模块）：550 个 Hook 点，国内版和 Google Play 版共 4 个内置版本；
+- [哔哩净界](https://github.com/wzgrx/BiliClear)（哔哩哔哩模块）：约 90 个 Hook 点，国内版 9.15 和国际版 6.5 两个内置版本，
+  宿主里本来就没有的部分用 `absentIn` 标出来，不算适配失败。
+
+设计方案见 [docs/DESIGN.md](docs/DESIGN.md)，查询语法见 [docs/SPEC.md](docs/SPEC.md)。
 
 ## 思路
 
@@ -59,6 +64,7 @@ dexadapt matrix --spec hooks.yaml --apk v1.apk --apk v2.apk --parity
 dexadapt diff old.apk new.apk --spec hooks.yaml --out report/
 dexadapt suggest --apk new.apk --target 'a.b.C#m(int)void' --other old.apk
 dexadapt repair --spec hooks.yaml --old old.apk --new new.apk
+dexadapt upgrade --spec hooks.yaml --old old.apk --new new.apk --out up/   # 一条龙：diff → matrix → repair → summary.md
 dexadapt libs app.apk --out libs/
 dexadapt export --spec hooks.yaml --out hooks.json
 dexadapt lint --spec hooks.yaml --apk app.apk                 # spec 检查器
@@ -96,7 +102,7 @@ tool_timeout_sec = 900
 { "mcpServers": { "dexadapt": { "command": "/path/to/dexadapt/cli/build/install/dexadapt/bin/dexadapt", "args": ["mcp"] } } }
 ```
 
-最后这种写法用于 Cursor、Gemini CLI、Cline 等。工具有 inspect、resolve、matrix、diff、suggest、repair、libs、lint、export；
+最后这种写法用于 Cursor、Gemini CLI、Cline 等。工具有 inspect、resolve、matrix、diff、suggest、repair、upgrade、libs、decompile、lint、export；
 每次调用在子进程里跑（原生库的日志不会混进通道），客户端带进度令牌时长任务每 10 秒报一次进度。给 AI 的使用说明见
 [AGENTS.md](AGENTS.md)。
 
@@ -119,7 +125,18 @@ hooks.createHook(MySymbols.bind) { before { param -> } }                      //
 linker.clazz(MySymbols.feed).resolve().firstField { name = "poi" }            // KavaRef：拿到 Class 后照常用
 ```
 
-红薯助手是完整的例子：`HostSymbols`、`FeatureRuntime`（宿主进程）和 `HostAdapter`（模块 App）。
+红薯助手是完整的例子：`HostSymbols`、`FeatureRuntime`（宿主进程）和 `HostAdapter`（模块 App）；
+哔哩净界是 libxposed + 多宿主（国内版、国际版）的例子。
+
+### 使用方固定版本
+
+使用方用复合构建（`includeBuild("../dexadapt")`）直接引用源码，DexAdapt 一改，旧的发版就重建不出来。所以：
+
+- DexAdapt 按 tag 发版（`v0.2.0` …，见 [CHANGELOG.md](CHANGELOG.md)）；
+- 使用方在 `gradle/dexadapt.commit` 记下用的提交，发版门禁核对 `../dexadapt` 正好在这个提交、没有未提交的改动
+  （例如哔哩净界的 `scripts/verify.sh`）；
+- 改了 `SymbolResolver` / `SymbolSource` / `DexKitSource` 后，使用方的解析代码摘要（`RESOLVER_SOURCES`）要跟着更新，
+  各手机上的本机表才会重扫。
 
 ## 开源库识别
 
@@ -134,7 +151,7 @@ linker.clazz(MySymbols.feed).resolve().firstField { name = "poi" }            //
 
 ## 开发
 
-- JDK 17+ 运行 Gradle，`./gradlew test`。
+- JDK 17+ 运行 Gradle，`./gradlew test`；GitHub Actions 每次推送跑一遍（没有 APK 样本，相关测试跳过）。
 - APK 索引记录：每个 APK 只用 dexlib2 解析一次，结果存在 `~/.cache/dexadapt/index`（小红书一个约 180 MB，读回来约 6 秒，
   直接解析约 40 秒；最多留 8 个）。`DEXADAPT_CACHE` 改目录，设成 `off` 关掉。
 - 用真实 APK 的测试读 `DEXADAPT_SAMPLES`（默认 `~/projects/xhs-apks`），没有就跳过。

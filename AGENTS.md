@@ -21,6 +21,8 @@ cli/build/install/dexadapt/bin/dexadapt mcp        # MCP 服务（标准输入�
 4. 改好的 spec 先 `lint`，再 `resolve` / `matrix` 在每个版本上验证唯一命中、0 缺失；
 5. 想知道打包的开源库和版本用 `libs`。
 
+1～4 可以用 `upgrade` 一次跑完（diff → matrix → repair），`summary.md` 直接当更新 spec 的 PR 说明。
+
 注意：`diff`、`matrix` 一次要几分钟、十几 GB 内存，一次只跑一个；第一次读某个 APK 要解析约 40 秒，
 之后读索引记录（`~/.cache/dexadapt/index`）只要几秒。工具的结果是建议，生成的查询必须经过 `resolve` 验证。
 

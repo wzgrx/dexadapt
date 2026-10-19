@@ -18,6 +18,11 @@ data class SymbolTable(
     val entries: Map<String, Resolved>,
     /** Symbols that could not be resolved, with the reason; their features stay off. */
     val missing: Map<String, String> = emptyMap(),
+    /**
+     * 确认这个构建本来就没有的符号（[absentIn]，例如国际版没有的入口）：不解析、不算缺失。
+     * 运行时据此把用到它们的功能标成“这个版本没有”，而不是“适配失败”。没有时不写进 JSON。
+     */
+    val absent: List<String> = emptyList(),
     // ---- 以下只有本机适配生成的表才有（内置表不写，JSON 保持原样） ----
     /** 生成时的符号定义指纹（[Catalog.fingerprint]）；模块更新改了查询后，本机表要重扫。 */
     val catalog: String = "",

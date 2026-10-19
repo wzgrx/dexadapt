@@ -1,0 +1,36 @@
+# 每次推送和 PR：编译全部模块（开着 allWarningsAsErrors）、跑测试。
+# 用真实 APK 的测试和 DexKit 原生库的测试在这里没有样本，会自动跳过；完整校验在本机跑（见 AGENTS.md）。
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: gradle/actions/setup-gradle@v6
+      # hooks 模块要 android.jar：运行器自带 Android SDK（ANDROID_HOME），settings.gradle.kts 自己找
+      - run: ./gradlew build
+      - if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-reports
+          path: '**/build/reports/tests/'
+          retention-days: 7
