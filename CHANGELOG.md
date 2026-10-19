@@ -2,6 +2,13 @@
 
 版本号跟 tag（`v0.2.0` …）。使用方用复合构建引用源码，各自记下用的是哪个提交（见 README“使用方固定版本”）。
 
+## 0.2.1（2026-10-20）
+
+- 去掉微信相关：删除 `specs/wechat-legacy/`（微信 Xposed / root 检测面 spec）和 `legacy/`（x-clean 旧桌面验证台，
+  已被 `cli` 取代）；README、DESIGN 不再提微信、x-clean、WeKit、“检测面分析”。开源库识别里的腾讯 MMKV 指纹保留。
+- 解析代码（`SymbolResolver` / `SymbolSource` / `DexKitSource`）和 0.2.0 相同，使用方的解析代码摘要不用改。
+- AGENTS.md 写明发版步骤和两个使用方。
+
 ## 0.2.0（2026-10-19）
 
 - 余量分析更准：类查询里的方法条件拆成子条件（`methods[0].params`、`methods[0].strings["x"]` …）逐个去掉，

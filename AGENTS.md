@@ -31,7 +31,8 @@ cli/build/install/dexadapt/bin/dexadapt mcp        # MCP 服务（标准输入�
 - JDK 17+，`./gradlew test` 跑全部测试；编译开着 `allWarningsAsErrors`，有警告就是失败。
 - 用真实 APK 的测试读 `DEXADAPT_SAMPLES`（默认 `~/projects/xhs-apks`），没有样本就跳过；DexKit 相关测试要先
   `scripts/build-dexkit-desktop.sh`；`hooks` 模块要 Android SDK（没有就不构建）。
-- 改了 `SymbolResolver` / `SymbolSource` / `DexKitSource`：使用方（例如红薯助手）的解析代码摘要会变，要通知它更新。
+- 改了 `SymbolResolver` / `SymbolSource` / `DexKitSource`：使用方（红薯助手、哔哩净界）的解析代码摘要会变，要通知它们更新。
+- 发版：改 `build.gradle.kts` 的 version 和 CHANGELOG，打 tag（`v0.2.1` …）并建 GitHub Release；使用方跟着改 `gradle/dexadapt.commit`。
 - 每个模块的职责见 README 的模块表；新功能先在 `docs/DESIGN.md` 里有位置，再写代码和测试。
 
 ## 模块速查
