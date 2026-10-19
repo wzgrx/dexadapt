@@ -157,4 +157,3 @@ linker.clazz(MySymbols.feed).resolve().firstField { name = "poi" }            //
 - 用真实 APK 的测试读 `DEXADAPT_SAMPLES`（默认 `~/projects/xhs-apks`），没有就跳过。
 - DexKit 相关测试需要桌面原生库：`scripts/build-dexkit-desktop.sh`（需要 git、cmake、ninja、clang）。
 - 开源库指纹库：`scripts/build-libdb.sh`（下载 Maven 构件，缓存在 `~/.cache/dexadapt/maven`）。
-- 旧的 x-clean-harness 桌面验证台在 `legacy/`，微信 spec 在 `specs/wechat-legacy/`（以后再接）。
