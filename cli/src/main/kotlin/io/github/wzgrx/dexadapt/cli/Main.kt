@@ -24,9 +24,9 @@ private const val USAGE = """dexadapt <命令> [参数]
   resolve --spec <spec.yaml> --apk <安装包> [--build <构建标识>] [--engine dexlib|dexkit] [--out <table.json>]
       按 spec 解析一个安装包，得到符号表。给了 --build 时用这个构建的钉子和“没有”的标注。
 
-  matrix --spec <spec.yaml> --apk <安装包> [--apk ...] [--channel <安装包>=<渠道>] [--parity] [--out <目录>]
+  matrix --spec <spec.yaml> --apk <安装包> [--apk ...] [--channel <安装包>=<渠道>] [--parity] [--incremental] [--out <目录>]
       多个版本一起解析：每个版本的符号表、余量（单点依赖）、版本矩阵（漂移）；--parity 再用 DexKit 解析一遍、
-      要求和 dexlib 逐条相同。输出 tables/<versionCode>.json、margin.json、matrix.md。
+      要求和 dexlib 逐条相同。输出 tables/<versionCode>.json、margin.json、matrix.md、manifest.json；--incremental区分fresh/reused，parity始终新跑。
 
   diff <旧安装包> <新安装包> [--spec <spec.yaml>] [--old-build <标识>] [--new-build <标识>] [--out <目录>]
       升级分析：包、签名、清单、原生库、代码规模、没混淆的包和类、网络接口、字符串，以及混淆映射（旧类 → 新类）。
@@ -38,10 +38,12 @@ private const val USAGE = """dexadapt <命令> [参数]
       要求在 --other 给的别的版本里也唯一命中。输出 YAML。
 
   repair --spec <spec.yaml> --old <旧安装包> --new <新安装包> [--old-build <标识>] [--new-build <标识>] [--id <符号 id> ...]
+      可加 --apk / --channel 指定额外回归，--json 输出证据，--out 保存candidate-spec.json。
       新版找不到的符号：诊断是哪个条件不满足，给出修好的查询（逐个放宽条件，或按混淆映射找到新位置重新生成），
       每条都在新旧两版验证过。不给 --id 时修全部找不到的。
 
   upgrade --spec <spec.yaml> --old <旧安装包> --new <新安装包> [--apk <别的样本> ...] [--old-build <标识>] [--new-build <标识>] [--out <目录>]
+      可加 --verify-repairs 复验候选，--parity 做DexKit对照，--incremental 复用严格匹配的结果。
       新版本一条龙：diff → matrix（旧版、新版和别的样本）→ repair，写 diff/、matrix/、repair.md 和 summary.md
       （可以直接当更新 spec 的 PR 说明）。新版全部解析到时退出码 0，否则 3。很慢（diff 和 matrix 各几分钟），一次只跑一个。
 
@@ -148,7 +150,7 @@ class Opts(args: List<String>) {
     fun flag(key: String): Boolean = key in flags
 
     private companion object {
-        val BOOLEAN = setOf("json", "parity")
+        val BOOLEAN = setOf("json", "parity", "incremental", "verify-repairs")
     }
 }
 
@@ -187,40 +189,55 @@ private class MatrixRun(val code: Int, val tables: Map<Build, SymbolTable>, val 
 
 private fun runMatrix(opts: Opts): MatrixRun {
     val spec = Spec.read(File(opts.need("spec")))
-    val apks = opts.all("apk").ifEmpty { error("至少给一个 --apk") }.map(::File)
+    val apks = opts.all("apk").ifEmpty { error("至少给一个 --apk") }.map(::File).distinctBy { it.canonicalPath }
     val channels = opts.all("channel").associate { it.substringBeforeLast('=') to it.substringAfterLast('=') }
     val out = File(opts.get("out") ?: "dexadapt-matrix").apply { mkdirs() }
-    val tables = LinkedHashMap<Build, SymbolTable>()
-    val margins = LinkedHashMap<Long, List<SymbolMargin>>()
-    val parity = ArrayList<String>()
-    var failed = false
-    for (apk in apks) {
+    val tables = LinkedHashMap<Build, SymbolTable>();val margins = LinkedHashMap<Long, List<SymbolMargin>>()
+    val parity = ArrayList<String>();val manifest=ArrayList<kotlinx.serialization.json.JsonObject>()
+    val identities=MatrixIdentityGuard()
+    val engineIdentity=MatrixCache.engine();val specIdentity=MatrixCache.hash(spec.toJson())
+    var failed=false
+    for ((number,apk) in apks.withIndex()) {
+        println("[${number+1}/${apks.size}] 打开 ${apk.name}")
+        val started=System.currentTimeMillis()
         val (build, table) = Engines.open(apk, Engine.DEXLIB).use { o ->
-            val b = Engines.build(apk, o.info, channels)
-            val started = System.currentTimeMillis()
-            val resolver = SymbolResolver.forBuild(o.source, o.info.versionCode, b.id)
-            val t = resolver.table(spec.catalog.symbols)
-            margins[o.info.versionCode] = resolver.margins(spec.catalog.symbols)
-            println("${b.label}（${b.id}）：${t.entries.size} 个找到，${t.missing.size} 个缺失（${(System.currentTimeMillis() - started) / 1000} 秒）")
-            b to t
+            val b=Engines.build(apk,o.info,channels);val identity=o.codeIdentity
+            val variant=o.info.packageName+"|"+b.id+"|"+identity
+            identities.accept(b.versionCode,variant,apk.path)
+            val key=MatrixCache.hash("$specIdentity|$engineIdentity|$variant")
+            val cached=if(opts.flag("incremental"))MatrixCache.read(File(out,".matrix-cache"),key) else null
+            val pair=if(cached!=null && cached.first.versionCode==o.info.versionCode && cached.first.dexSha256==o.source.dexSha256)cached else {
+                val resolver=SymbolResolver.forBuild(o.source,o.info.versionCode,b.id)
+                val t=resolver.table(spec.catalog.symbols, onProgress = { done,total->if(done%100==0 || done==total)println("  ${b.id} 解析 $done/$total") })
+                println("  ${b.id} 计算查询余量")
+                val rows=resolver.margins(spec.catalog.symbols)
+                MatrixCache.write(File(out,".matrix-cache"),key,t,rows);t to rows
+            }
+            margins[o.info.versionCode]=pair.second
+            val mode=if(cached!=null && cached==pair)"reused" else "fresh"
+            manifest+=kotlinx.serialization.json.JsonObject(mapOf("build" to kotlinx.serialization.json.JsonPrimitive(b.id),
+                "package" to kotlinx.serialization.json.JsonPrimitive(o.info.packageName),"versionCode" to kotlinx.serialization.json.JsonPrimitive(b.versionCode),
+                "codeIdentity" to kotlinx.serialization.json.JsonPrimitive(identity),"mode" to kotlinx.serialization.json.JsonPrimitive(mode),
+                "cacheKey" to kotlinx.serialization.json.JsonPrimitive(key),"elapsedMs" to kotlinx.serialization.json.JsonPrimitive(System.currentTimeMillis()-started)))
+            println("${b.label}（${b.id}）：${pair.first.entries.size} 个找到，${pair.first.missing.size} 个缺失，$mode（${(System.currentTimeMillis()-started)/1000} 秒）")
+            b to pair.first
         }
-        tables[build] = table
-        if (table.missing.isNotEmpty()) failed = true
-        File(out, "tables/${build.versionCode}.json").apply { parentFile.mkdirs() }.writeText(table.toJson() + "\n")
-        if (opts.flag("parity")) {
-            // DexKit 按“未知版本”的方式解析（不用钉子），结果要和 dexlib 的逐条相同。
-            val kit = Engines.open(apk, Engine.DEXKIT).use { o -> SymbolResolver(o.source, o.info.versionCode).table(spec.catalog.symbols) }
-            val diff = (table.entries.keys + kit.entries.keys).filter { table.entries[it] != kit.entries[it] }.sorted()
-            parity += "${build.label}: " + if (diff.isEmpty()) "DexKit 一致" else "DexKit 不一致 ${diff.size} 个：${diff.take(10).joinToString()}"
-            if (diff.isNotEmpty()) failed = true
+        tables[build]=table
+        if(table.missing.isNotEmpty())failed=true
+        File(out,"tables/${build.versionCode}.json").apply { parentFile.mkdirs() }.writeText(table.toJson()+"\n")
+        if(opts.flag("parity")) {
+            val kit=Engines.open(apk,Engine.DEXKIT).use { o->SymbolResolver(o.source,o.info.versionCode).table(spec.catalog.symbols) }
+            val different=(table.entries.keys+kit.entries.keys).filter { table.entries[it]!=kit.entries[it] }.sorted()
+            parity+="${build.label}: "+if(different.isEmpty())"DexKit 一致（fresh）" else "DexKit 不一致 ${different.size} 个：${different.take(10).joinToString()}"
+            if(different.isNotEmpty())failed=true
         }
     }
-    File(out, "margin.json").writeText(MarginReport.of(spec.catalog.fingerprint(), margins).toJson() + "\n")
-    File(out, "matrix.md").writeText(Matrix.render(tables, margins, regenerate = "由 `dexadapt matrix` 生成。"))
-    File(out, "matrix.html").writeText(Matrix.html(tables, margins))
-    parity.forEach(::println)
-    println("输出在 ${out.path}/（tables/、margin.json、matrix.md、matrix.html）")
-    return MatrixRun(if (failed) 3 else 0, tables, margins)
+    File(out,"manifest.json").writeText(kotlinx.serialization.json.JsonArray(manifest).toString()+"\n")
+    File(out,"margin.json").writeText(MarginReport.of(spec.catalog.fingerprint(),margins).toJson()+"\n")
+    File(out,"matrix.md").writeText(Matrix.render(tables,margins,regenerate="由 `dexadapt matrix` 生成；manifest.json区分fresh/reused。"))
+    File(out,"matrix.html").writeText(Matrix.html(tables,margins));parity.forEach(::println)
+    println("输出在 ${out.path}/（tables/、margin.json、matrix.md、matrix.html、manifest.json）")
+    return MatrixRun(if(failed)3 else 0,tables,margins)
 }
 
 private fun diff(opts: Opts): Int {
@@ -235,8 +252,8 @@ private fun runDiff(opts: Opts): io.github.wzgrx.dexadapt.diff.DiffReport {
     val started = System.currentTimeMillis()
     Engines.open(oldPath, Engine.DEXLIB).use { a ->
         Engines.open(newPath, Engine.DEXLIB).use { b ->
-            val ia = a.source as? io.github.wzgrx.dexadapt.dexlib.DexIndex ?: error("拆分包里有多份代码的暂不支持 diff")
-            val ib = b.source as? io.github.wzgrx.dexadapt.dexlib.DexIndex ?: error("拆分包里有多份代码的暂不支持 diff")
+            val ia = a.diffIndex()
+            val ib = b.diffIndex()
             println("读入 ${a.info.label} 和 ${b.info.label}（${(System.currentTimeMillis() - started) / 1000} 秒），开始配对…")
             val mapping = io.github.wzgrx.dexadapt.diff.ClassMatcher(ia, ib).run()
             val symbols = spec?.let { s ->
@@ -452,42 +469,91 @@ private fun suggest(opts: Opts): Int {
     }
 }
 
+private fun repairJson(r:RepairRun):kotlinx.serialization.json.JsonObject = kotlinx.serialization.json.JsonObject(mapOf(
+    "broken" to kotlinx.serialization.json.JsonPrimitive(r.broken),"fixed" to kotlinx.serialization.json.JsonPrimitive(r.fixed),
+    "fixes" to kotlinx.serialization.json.JsonArray(r.fixes.map { json.encodeToJsonElement(io.github.wzgrx.dexadapt.synth.Repair.Fix.serializer(),it) })))
+
 private fun repair(opts: Opts): Int {
-    val r = runRepair(opts)
-    print(r.text)
+    val r=runRepair(opts)
+    opts.get("out")?.let { path->val out=File(path).apply { mkdirs() }
+        File(out,"repair.json").writeText(repairJson(r).toString()+"\n")
+        File(out,"repair.md").writeText(r.text)
+        File(out,"candidate-spec.json").writeText(r.candidate.toJson()+"\n")
+    }
+    if(opts.flag("json"))println(repairJson(r)) else print(r.text)
     return r.code
 }
 
-/** 一次 repair 的结果：打印的内容、找不到的个数、修好的个数。 */
-private class RepairRun(val code: Int, val text: String, val broken: Int, val fixed: Int)
+private class RepairRun(val code:Int,val text:String,val broken:Int,val fixed:Int,
+    val fixes:List<io.github.wzgrx.dexadapt.synth.Repair.Fix>,val candidate:Spec)
 
-private fun runRepair(opts: Opts): RepairRun {
-    val spec = Spec.read(File(opts.need("spec")))
-    val text = StringBuilder()
-    Engines.open(File(opts.need("old")), Engine.DEXLIB).use { a ->
-        Engines.open(File(opts.need("new")), Engine.DEXLIB).use { b ->
-            val tb = SymbolResolver.forBuild(b.source, b.info.versionCode, opts.get("new-build")).table(spec.catalog.symbols)
-            val wanted = opts.all("id").toSet()
-            val broken = spec.catalog.symbols.filter { it.id in tb.missing && (wanted.isEmpty() || it.id in wanted) }
-            if (broken.isEmpty()) return RepairRun(0, "新版里 spec 的符号都能解析，不用修\n", 0, 0)
-            val ia = a.source as? io.github.wzgrx.dexadapt.dexlib.DexIndex
-            val ib = b.source as? io.github.wzgrx.dexadapt.dexlib.DexIndex
-            // 有映射时用它推测新位置（放宽条件修不好的靠它）。
-            val mapping = if (ia != null && ib != null) io.github.wzgrx.dexadapt.diff.ClassMatcher(ia, ib).run() else null
-            val ta = SymbolResolver.forBuild(a.source, a.info.versionCode, opts.get("old-build")).table(spec.catalog.symbols)
-            val diff = mapping?.let { io.github.wzgrx.dexadapt.diff.SymbolDiff.of(ta, tb, it) }
-            val repair = io.github.wzgrx.dexadapt.synth.Repair(a.source, b.source)
-            var fixed = 0
-            for (s in broken) {
-                val guessText = diff?.rows?.firstOrNull { it.id == s.id }?.guess
-                val guess = guessText?.takeIf { '?' !in it }?.let { runCatching { target(it, b.source) }.getOrNull() }
-                val fix = repair.repair(s, guess)
-                text.appendLine("## ${s.id}\n诊断：${fix.diagnosis}\n处理：${fix.action}" + (fix.newLocation?.let { "\n新位置：$it" } ?: ""))
-                fix.yaml?.let { text.appendLine(it); fixed++ }
-                text.appendLine()
+private fun runRepair(opts:Opts):RepairRun {
+    val result=runPairRepair(opts)
+    if(result.code!=0)return result
+    val original=Spec.read(File(opts.need("spec")))
+    val pairPaths=setOf(File(opts.need("old")).canonicalPath,File(opts.need("new")).canonicalPath)
+    val paths=opts.all("apk").map(::File).distinctBy { it.canonicalPath }.filter { it.canonicalPath !in pairPaths }
+    val channels=opts.all("channel").associate { it.substringBeforeLast('=') to it.substringAfterLast('=') }
+    val checked=ArrayList<String>()
+    for(path in paths) {
+        // 旧/新版索引已离开作用域；逐包验证，不同时把十一份大型索引留在堆里。
+        Engines.open(path,Engine.DEXLIB).use { o->
+            val build=Engines.build(path,o.info,channels)
+            val before=SymbolResolver.forBuild(o.source,o.info.versionCode,build.id).table(original.catalog.symbols)
+            val after=SymbolResolver.forBuild(o.source,o.info.versionCode,build.id).table(result.candidate.catalog.symbols)
+            val changed=before.entries.keys.filter { before.entries[it]!=after.entries[it] }
+            if(before.missing.isNotEmpty() || after.missing.isNotEmpty() || changed.isNotEmpty()) {
+                val detail="额外回归 ${build.id} 未通过：旧缺失${before.missing.size}，新缺失${after.missing.size}，原目标改变${changed.size}"
+                return RepairRun(3,result.text+"\n$detail\n",result.broken,0,result.fixes.map { it.copy(yaml=null,candidate=null,extra=emptyList(),action="额外回归失败，不应用候选") },original)
             }
-            text.appendLine("找不到 ${broken.size} 个，给出修复 $fixed 个")
-            return RepairRun(if (fixed == broken.size) 0 else 3, text.toString(), broken.size, fixed)
+            checked+=build.id;if(!opts.flag("json"))println("额外回归 ${build.id}：${after.entries.size} 个目标保持一致")
+        }
+    }
+    return RepairRun(result.code,result.text,result.broken,result.fixed,result.fixes.map { it.copy(checkedBuilds=(it.checkedBuilds+checked).distinct()) },result.candidate)
+}
+
+private fun runPairRepair(opts: Opts): RepairRun {
+    val spec=Spec.read(File(opts.need("spec")));val text=StringBuilder()
+    Engines.open(File(opts.need("old")),Engine.DEXLIB).use { a->
+        Engines.open(File(opts.need("new")),Engine.DEXLIB).use { b->
+            run {
+                val samples=emptyList<io.github.wzgrx.dexadapt.synth.Repair.Sample>()
+                val tb=SymbolResolver.forBuild(b.source,b.info.versionCode,opts.get("new-build")).table(spec.catalog.symbols)
+                val wanted=opts.all("id").toSet()
+                val broken=spec.catalog.symbols.filter { it.id in tb.missing && (wanted.isEmpty() || it.id in wanted) }
+                if(broken.isEmpty())return RepairRun(0,"新版里 spec 的符号都能解析，不用修\n",0,0,emptyList(),spec)
+                val mapping=io.github.wzgrx.dexadapt.diff.ClassMatcher(a.diffIndex(),b.diffIndex()).run()
+                val ta=SymbolResolver.forBuild(a.source,a.info.versionCode,opts.get("old-build")).table(spec.catalog.symbols)
+                val diff=io.github.wzgrx.dexadapt.diff.SymbolDiff.of(ta,tb,mapping)
+                val fixes=ArrayList<io.github.wzgrx.dexadapt.synth.Repair.Fix>();var candidate=spec;var fixed=0
+                for ((index,original) in broken.withIndex()) {
+                    if(!opts.flag("json"))println("修复 [${index+1}/${broken.size}] ${original.id}（额外回归 ${samples.size} 个构建）")
+                    val symbol=candidate.catalog.symbols.single { it.id==original.id }
+                    val restored=SymbolResolver.forBuild(b.source,b.info.versionCode,opts.get("new-build")).resolve(symbol).getOrNull()
+                    if(restored!=null) {
+                        fixed++;fixes+=io.github.wzgrx.dexadapt.synth.Repair.Fix(original.id,"依赖修复后恢复","无需修改本符号",io.github.wzgrx.dexadapt.synth.Repair.text(restored),null)
+                        continue
+                    }
+                    val repair=io.github.wzgrx.dexadapt.synth.Repair(a.source,b.source,a.info.versionCode,b.info.versionCode,
+                        opts.get("old-build"),opts.get("new-build"),samples,candidate.catalog)
+                    val guessText=diff.rows.firstOrNull { it.id==symbol.id }?.guess
+                    val guess=guessText?.takeIf { '?' !in it }?.let { runCatching { target(it,b.source) }.getOrNull() }
+                    val fix=repair.repair(symbol,guess);fixes+=fix
+                    text.appendLine("## ${symbol.id}\n诊断：${fix.diagnosis}\n处理：${fix.action}"+(fix.newLocation?.let { "\n新位置：$it" }?:""))
+                    fix.candidate?.let { replacement->candidate=candidate.withSymbols(fix.extra+replacement);fixed++ }
+                    fix.yaml?.let { text.appendLine(it) };text.appendLine()
+                }
+                val oldAfter=SymbolResolver.forBuild(a.source,a.info.versionCode,opts.get("old-build")).table(candidate.catalog.symbols)
+                val newAfter=SymbolResolver.forBuild(b.source,b.info.versionCode,opts.get("new-build")).table(candidate.catalog.symbols)
+                val displacedOld=ta.entries.keys.filter { ta.entries[it]!=oldAfter.entries[it] }
+                val displacedNew=tb.entries.keys.filter { tb.entries[it]!=newAfter.entries[it] }
+                if(displacedOld.isNotEmpty() || displacedNew.isNotEmpty()) {
+                    text.appendLine("候选改变了原有健康目标（旧版${displacedOld.size}、新版${displacedNew.size}），不应用。")
+                    return RepairRun(3,text.toString(),broken.size,0,fixes.map { it.copy(yaml=null,candidate=null,extra=emptyList(),action="健康目标发生变化，不应用候选") },spec)
+                }
+                text.appendLine("找不到 ${broken.size} 个，给出修复或依赖恢复 $fixed 个；候选需经完整matrix/parity复验。")
+                return RepairRun(if(fixed==broken.size)0 else 3,text.toString(),broken.size,fixed,fixes,candidate)
+            }
         }
     }
 }
@@ -510,9 +576,16 @@ private fun upgrade(opts: Opts): Int {
     val derived = listOf(old to opts.get("old-build"), new to opts.get("new-build"))
         .mapNotNull { (apk, b) -> b?.takeIf { '_' in it }?.let { "$apk=" + it.substringBeforeLast('_').lowercase() } }
     val channels = (derived + opts.all("channel")).flatMap { listOf("--channel", it) }
-    val m = runMatrix(Opts(listOf("--spec", spec) + apks.flatMap { listOf("--apk", it) } + channels + listOf("--out", File(out, "matrix").path)))
+    val matrixFlags=listOf("parity","incremental").filter(opts::flag).map { "--$it" }
+    var m = runMatrix(Opts(listOf("--spec", spec) + apks.flatMap { listOf("--apk", it) } + channels + matrixFlags + listOf("--out", File(out, "matrix").path)))
     println("== 3/3 修复")
-    val r = runRepair(Opts(listOf("--spec", spec, "--old", old, "--new", new) + pass("old-build", "new-build")))
+    val r = runRepair(Opts(listOf("--spec", spec, "--old", old, "--new", new) + pass("old-build", "new-build") + opts.all("apk").flatMap { listOf("--apk",it) } + channels))
+    File(out,"repair.json").writeText(repairJson(r).toString()+"\n")
+    val candidate=File(out,"candidate-spec.json").apply { writeText(r.candidate.toJson()+"\n") }
+    if(opts.flag("verify-repairs") && r.code==0 && r.broken>0) {
+        println("== 4/4 候选补丁全版本复验（原spec保持不变）")
+        m=runMatrix(Opts(listOf("--spec",candidate.path)+apks.flatMap { listOf("--apk",it) }+channels+matrixFlags+listOf("--out",File(out,"verified-matrix").path)))
+    }
     File(out, "repair.md").writeText(r.text)
     print(r.text)
     val summary = buildString {
@@ -537,11 +610,11 @@ private fun upgrade(opts: Opts): Int {
         appendLine()
         appendLine("## 修复")
         appendLine()
-        appendLine(if (r.broken == 0) "新版里全部符号都能解析。" else "新版找不到 ${r.broken} 个，给出修复 ${r.fixed} 个（见 `repair.md`，每条都在新旧两版验证过；合进 spec 前再跑一次 `lint` 和 `matrix`）。")
+        appendLine(if (r.broken == 0) "新版里全部符号都能解析。" else "新版找不到 ${r.broken} 个，给出修复 ${r.fixed} 个（见 `repair.md`，每条经指定构建及额外回归样本验证；合进 Kotlin/spec 目录前再跑一次 `lint` 和 `matrix`）。")
     }
     File(out, "summary.md").writeText(summary)
     println("汇总：${File(out, "summary.md").path}")
-    return if (r.broken == 0 && m.code == 0) 0 else 3
+    return if ((r.broken == 0 || opts.flag("verify-repairs") && r.code==0) && m.code == 0) 0 else 3
 }
 
 private fun importFingerprints(opts: Opts): Int {

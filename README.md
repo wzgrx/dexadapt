@@ -157,3 +157,15 @@ linker.clazz(MySymbols.feed).resolve().firstField { name = "poi" }            //
 - 用真实 APK 的测试读 `DEXADAPT_SAMPLES`（默认 `~/projects/xhs-apks`），没有就跳过。
 - DexKit 相关测试需要桌面原生库：`scripts/build-dexkit-desktop.sh`（需要 git、cmake、ninja、clang）。
 - 开源库指纹库：`scripts/build-libdb.sh`（下载 Maven 构件，缓存在 `~/.cache/dexadapt/maven`）。
+
+## 0.3.0 维护增强
+
+索引缓存使用真实DEX内容摘要和载荷校验，默认最多64条/4GiB；`DEXADAPT_CACHE_MAX_ENTRIES`、`DEXADAPT_CACHE_MAX_BYTES`（正整数）可调整，`DEXADAPT_CACHE=off`仍可禁用。缓存格式升级后旧记录不会误用。
+
+- `matrix --incremental`：仅在完整spec、实际引擎字节码、包/构建/全部代码DEX身份一致时复用表和完整余量；manifest.json明确fresh/reused与耗时，`--parity`始终重新跑。默认仍全量计算。相同versionCode但不同构建/DEX拒绝覆盖。
+- `repair --apk <额外样本> --channel <路径>=cn --out <目录> --json`：使用真实old/new-build，保留pins/absentIn/contract；候选依赖重新绑定，额外样本逐个验证原目标不变，输出repair.json和candidate-spec.json。
+- `upgrade --verify-repairs --parity [--incremental]`：对独立候选重新跑全版本矩阵，原spec不覆盖。Kotlin目录作为源的使用方仍需把经审查的查询写回Kotlin，而不是只改生成YAML。上述选项亦由MCP暴露。
+- 完整代码split可做桌面diff；桌面多代码表使用复合身份，base-only消费者会安全拒绝不匹配表，需要消费者支持完整代码身份后才可部署。单代码APK的身份与匹配语义不变。
+- 方法差异保留操作码分数，另列字符串加载顺序、常量/调用/字段变化证据；1.0不代表语义等价。lint提示Kotlin实现名的脆弱依赖。
+
+本次不改SymbolResolver/SymbolSource/DexKitSource匹配规则，旧消费者不必因解析语义变化强制重扫；升级依赖仍应固定提交并执行各自矩阵回归。

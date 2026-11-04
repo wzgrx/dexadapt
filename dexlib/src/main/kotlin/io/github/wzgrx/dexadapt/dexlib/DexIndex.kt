@@ -51,6 +51,8 @@ class MethodInfo(
     internal val opcodeIds: ByteArray = EMPTY_OPS,
     override val numbers: Set<Long> = emptySet(),
     override val annotations: List<String> = emptyList(),
+    /** 桌面证据：保留const-string的加载顺序，避免把同集合的键/值调换误认为无变化。 */
+    val orderedStrings:List<String> = strings.toList(),
 ) : MethodView {
     override val opcodes: List<String> get() = opcodeIds.map { OpcodeNames.name(it) }
 
@@ -92,6 +94,14 @@ class DexIndex private constructor(
             return DexIndex(classes.associateBy { it.name }, byString, "")
         }
 
+        /** 完整代码拆包用于桌面diff；重复类仍由base/最先来源定义。 */
+        fun combine(sources:List<DexIndex>,identity:String):DexIndex {
+            require(sources.isNotEmpty()) { "没有代码索引" }
+            val classes=LinkedHashMap<String,ClassInfo>()
+            sources.forEach { source->source.classes.forEach { (name,info)->classes.putIfAbsent(name,info) } }
+            return assemble(classes.values.toList(),identity)
+        }
+
         /** 拼装（索引记录读回来时用）：按方法里的字符串建反查表。 */
         internal fun assemble(classes: List<ClassInfo>, dexSha256: String): DexIndex {
             val byString = HashMap<String, MutableList<MethodInfo>>(400_000)
@@ -104,8 +114,9 @@ class DexIndex private constructor(
          * [cache] 为 false 时总是重新解析（不读也不写记录）。
          */
         fun load(apk: File, cache: Boolean = true): DexIndex {
-            val key = if (cache) IndexCache.key(apk, CLASSES_DEX) else null
-            key?.let(IndexCache::read)?.let { return it }
+            val digest = if (cache && apk.extension.lowercase() != "dex") runCatching { DexDigest.of(apk) }.getOrNull() else null
+            val key = digest?.let(IndexCache::keyForDigest)
+            key?.let { IndexCache.read(it, digest) }?.let { return it }
             return parse(apk).also { index -> key?.let { IndexCache.write(it, index) } }
         }
 
@@ -129,6 +140,7 @@ class DexIndex private constructor(
                     for (f in def.fields) info.fields += FieldInfo(name, intern(f.name), intern(jvmName(f.type)), f.accessFlags)
                     for (m in def.methods) {
                         val strings = HashSet<String>()
+                        val orderedStrings=ArrayList<String>()
                         val calls = HashSet<String>()
                         val fieldRefs = HashSet<String>()
                         var numbers: HashSet<Long>? = null
@@ -143,7 +155,7 @@ class DexIndex private constructor(
                             }
                             if (insn is ReferenceInstruction) {
                                 when (val ref = insn.reference) {
-                                    is StringReference -> strings += intern(ref.string)
+                                    is StringReference -> { val value=intern(ref.string);strings+=value;orderedStrings+=value }
                                     is MethodReference -> calls += intern(
                                         MethodInfo.signature(jvmName(ref.definingClass), ref.name, ref.parameterTypes.map { jvmName(it.toString()) }, jvmName(ref.returnType)),
                                     )
@@ -154,7 +166,7 @@ class DexIndex private constructor(
                         val method = MethodInfo(
                             name, intern(m.name), m.parameterTypes.map { intern(jvmName(it.toString())) }, intern(jvmName(m.returnType)),
                             m.accessFlags, strings, calls, fieldRefs,
-                            ops.toByteArray(), numbers ?: emptySet(), m.annotations.map(::annotationText),
+                            ops.toByteArray(), numbers ?: emptySet(), m.annotations.map(::annotationText), orderedStrings,
                         )
                         info.methods += method
                         for (s in strings) byString.getOrPut(s) { ArrayList(2) } += method

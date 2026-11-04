@@ -97,6 +97,10 @@ object SpecLint {
                 }
             }
         }
+        val declaration=queryKey(s)
+        if(declaration.contains("kotlin.Lazy") || declaration.contains("kotlin.jvm.internal.Intrinsics#")) {
+            add(Issue(Level.WARNING,s.id,"依赖Kotlin库实现名，R8可能重命名；优先使用业务锚点和调用/字段关系并做多版本验证"))
+        }
         if (s.pins.isNotEmpty() && s.absentIn.any { it in s.pins.keys }) add(Issue(Level.ERROR, s.id, "同一个构建既钉了位置又标了“没有”：${s.absentIn.filter { it in s.pins.keys }}"))
     }
 

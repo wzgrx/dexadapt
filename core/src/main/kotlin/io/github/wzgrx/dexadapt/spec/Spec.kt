@@ -65,6 +65,21 @@ data class Spec(val app: String?, val catalog: Catalog) {
         put("symbols", buildJsonArray { catalog.symbols.forEach { add(SpecCodec.symbol(it, catalog.contracts[it.id])) } })
     }
 
+    /** 合并候选定义后重新绑定全部符号引用，保留原契约及构建元数据；原spec不被修改。 */
+    fun withSymbols(replacements: Collection<Symbol>): Spec {
+        require(replacements.map { it.id }.distinct().size == replacements.size) { "候选符号id重复" }
+        val original = encode()
+        val changed = Spec(null, Catalog(replacements.toList())).encode()["symbols"]!!.jsonArray
+            .associateBy { it.jsonObject["id"]!!.jsonPrimitive.content }
+        val seen = HashSet<String>()
+        val merged = original["symbols"]!!.jsonArray.map { item ->
+            val old = item.jsonObject;val id = old["id"]!!.jsonPrimitive.content;seen += id
+            val next = changed[id]?.jsonObject
+            if(next==null)item else JsonObject(old + next)
+        } + changed.filterKeys { it !in seen }.values
+        return decode(JsonObject(original + ("symbols" to JsonArray(merged))))
+    }
+
     companion object {
         const val VERSION = 1
         private val pretty = Json { prettyPrint = true; prettyPrintIndent = "  " }

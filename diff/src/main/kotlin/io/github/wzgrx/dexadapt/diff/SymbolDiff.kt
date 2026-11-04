@@ -23,10 +23,13 @@ data class SymbolDiff(val rows: List<Row>) {
         val reason: String? = null,
         /** 新版失败时，按混淆映射推测的位置。 */
         val guess: String? = null,
-        /** 方法：新旧方法体（指令序列）的相似度，0～1；低说明“找到了但逻辑可能变了”，要复核 Hook 的写法。 */
+        /** 方法：新旧操作码序列的相似度（不代表参数/常量/分支语义相同），0～1；低说明“找到了但逻辑可能变了”，要复核 Hook 的写法。 */
         val bodySimilarity: Double? = null,
         /** 方法：Hook 可能不生效的风险（太小可能被 ART 内联、抽象方法……）。 */
         val hookRisk: String? = null,
+        val semanticEvidence:List<String> = emptyList(),
+        val beforeStringLoads:List<String> = emptyList(),
+        val afterStringLoads:List<String> = emptyList(),
     )
 
     enum class Status {
@@ -60,6 +63,16 @@ data class SymbolDiff(val rows: List<Row>) {
                             id, if (a == b) Status.SAME else Status.MOVED, text(a), text(b),
                             bodySimilarity = if (ma != null && mb != null) BodySimilarity.of(ma.opcodes, mb.opcodes) else null,
                             hookRisk = mb?.let { HookRisk.of(it, callers[text(b)] ?: 0) },
+                            semanticEvidence = if(ma!=null && mb!=null)buildList {
+                                if(ma.orderedStrings!=mb.orderedStrings)add("字符串加载顺序变化，需核对extra键/比较值的角色")
+                                if(ma.strings!=mb.strings)add("字符串常量集合变化，需核对键/值角色")
+                                if(ma.numbers!=mb.numbers)add("数字常量集合变化，需核对开关code/selector")
+                                if(ma.calls!=mb.calls)add("调用签名集合变化，可能包含混淆改名；需核对真实调用")
+                                if(ma.fieldRefs!=mb.fieldRefs)add("字段引用集合变化，需核对数据流")
+                                add("操作码相似度不证明参数含义或分支语义等价")
+                            } else emptyList(),
+                            beforeStringLoads=if(ma!=null && mb!=null && ma.orderedStrings!=mb.orderedStrings)ma.orderedStrings.take(32).map { it.take(256) } else emptyList(),
+                            afterStringLoads=if(ma!=null && mb!=null && ma.orderedStrings!=mb.orderedStrings)mb.orderedStrings.take(32).map { it.take(256) } else emptyList(),
                         )
                     }
                     a != null -> Row(id, Status.LOST, text(a), null, new.missing[id], mapping?.let { guess(a, it.byOld, methodMap) })

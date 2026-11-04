@@ -58,7 +58,7 @@ object Mcp {
             "matrix", "多个版本一起解析：符号表、余量（单点依赖的查询）、版本矩阵（漂移）；parity 时再用 DexKit 解析要求逐条一致。",
             listOf(
                 Param("spec", "string", "spec 文件", true), Param("apk", "array", "安装包路径（多个）", true),
-                Param("channel", "array", "安装包=渠道"), Param("parity", "boolean", "再用 DexKit 核对"), Param("out", "string", "输出目录"),
+                Param("channel", "array", "安装包=渠道"), Param("parity", "boolean", "再用 DexKit 核对"), Param("incremental","boolean","复用身份/引擎/spec完全一致的矩阵结果，parity仍重新运行"), Param("out", "string", "输出目录"),
             ),
             report = "matrix.md", defaultOut = "dexadapt-matrix",
         ),
@@ -82,14 +82,17 @@ object Mcp {
             listOf(
                 Param("spec", "string", "spec 文件", true), Param("old", "string", "旧安装包", true), Param("new", "string", "新安装包", true),
                 Param("old_build", "string", "旧版构建标识"), Param("new_build", "string", "新版构建标识"),
-                Param("id", "array", "只修这些符号"),
-            ),
+                Param("id", "array", "只修这些符号"),Param("apk","array","额外回归安装包"),Param("channel","array","安装包=渠道"),
+                Param("json","boolean","输出结构化修复证据"),Param("out","string","候选补丁与报告目录"),
+            ),report="repair.md",defaultOut="dexadapt-repair",
         ),
         Tool(
             "upgrade", "新版本一条龙：diff → matrix（旧版、新版和 apk 给的别的样本）→ repair，返回 summary.md（可当更新 spec 的 PR 说明）；详细报告在 out 目录。很慢（十分钟级）。",
             listOf(
                 Param("spec", "string", "spec 文件", true), Param("old", "string", "旧安装包", true), Param("new", "string", "新安装包", true),
                 Param("apk", "array", "别的样本安装包"), Param("channel", "array", "安装包=渠道"),
+                Param("parity","boolean","矩阵逐项做DexKit复验"),Param("incremental","boolean","严格身份匹配后复用矩阵结果"),
+                Param("verify_repairs","boolean","对生成的候选spec重新跑全版本矩阵，保留原spec"),
                 Param("old_build", "string", "旧版构建标识"), Param("new_build", "string", "新版构建标识"), Param("out", "string", "输出目录"),
             ),
             report = "summary.md", defaultOut = "dexadapt-upgrade",

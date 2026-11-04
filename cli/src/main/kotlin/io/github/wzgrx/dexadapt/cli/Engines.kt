@@ -19,8 +19,10 @@ import java.util.zip.ZipFile
 enum class Engine { DEXLIB, DEXKIT }
 
 /** 打开的一个安装包：档案、数据源，用完关掉（DexKit 持有原生资源）。 */
-class Opened(val set: ApkSet, val info: ApkInfo, val source: SymbolSource, private val closer: () -> Unit) : Closeable {
+class Opened(val set: ApkSet, val info: ApkInfo, val source: SymbolSource, private val closer: () -> Unit, val indices: List<DexIndex> = emptyList()) : Closeable {
     override fun close() = closer()
+    val codeIdentity: String get() = source.dexSha256
+    fun diffIndex():DexIndex = (source as? DexIndex) ?: DexIndex.combine(indices,codeIdentity)
 }
 
 object Engines {
@@ -32,15 +34,24 @@ object Engines {
         return when (engine) {
             Engine.DEXLIB -> {
                 val sources = withCode.map { DexIndex.load(it) }
-                Opened(set, info, if (sources.size == 1) sources[0] else MultiSource(sources)) {}
+                Opened(set, info, combineSource(sources), {}, sources)
             }
             Engine.DEXKIT -> {
                 DesktopDexKit.load()
                 val bridges = withCode.map { DexKitBridge.create(it.path) }
-                val sources = bridges.mapIndexed { i, b -> DexKitSource(b, if (i == 0) DexDigest.of(withCode[0]) else "") }
-                Opened(set, info, if (sources.size == 1) sources[0] else MultiSource(sources)) { bridges.forEach { runCatching { it.close() } } }
+                val sources = bridges.mapIndexed { i, b -> DexKitSource(b, DexDigest.of(withCode[i])) }
+                Opened(set, info, combineSource(sources), { bridges.forEach { runCatching { it.close() } } })
             }
         }
+    }
+
+    /** 桌面完整拆包身份不能只认base；旧的base-only运行时将拒绝不匹配的表，避免错误复用。 */
+    private fun combineSource(sources:List<SymbolSource>):SymbolSource {
+        require(sources.isNotEmpty()) { "安装包没有代码" }
+        if(sources.size==1)return sources.single()
+        val delegate=MultiSource(sources)
+        val identity=MatrixCache.hash(sources.joinToString("|"){it.dexSha256})
+        return object:SymbolSource by delegate { override val dexSha256=identity }
     }
 
     /**

@@ -29,3 +29,15 @@ application {
 tasks.jar {
     manifest { attributes("Implementation-Title" to "dexadapt", "Implementation-Version" to project.version) }
 }
+
+// 离线分发附带本次源码对应的说明，不附带宿主APK或研究记录。
+distributions {
+    main {
+        contents {
+            from(rootProject.file("README.md"))
+            from(rootProject.file("CHANGELOG.md"))
+            from(rootProject.file("LICENSE"))
+            into("docs") { from(rootProject.file("docs/SPEC.md"));from(rootProject.file("docs/DESIGN.md")) }
+        }
+    }
+}

@@ -23,7 +23,7 @@ cli/build/install/dexadapt/bin/dexadapt mcp        # MCP 服务（标准输入�
 
 1～4 可以用 `upgrade` 一次跑完（diff → matrix → repair），`summary.md` 直接当更新 spec 的 PR 说明。
 
-注意：`diff`、`matrix` 一次要几分钟、十几 GB 内存，一次只跑一个；第一次读某个 APK 要解析约 40 秒，
+注意：`diff`、`matrix` 一次要几分钟、十几 GB 内存，一次只跑一个；第一次读某个 APK 要解析约 40 秒，缓存默认64条/4GiB（可配置）；
 之后读索引记录（`~/.cache/dexadapt/index`）只要几秒。工具的结果是建议，生成的查询必须经过 `resolve` 验证。
 
 **当代码改**（改 DexAdapt 本身）：
@@ -32,7 +32,7 @@ cli/build/install/dexadapt/bin/dexadapt mcp        # MCP 服务（标准输入�
 - 用真实 APK 的测试读 `DEXADAPT_SAMPLES`（默认 `~/projects/xhs-apks`），没有样本就跳过；DexKit 相关测试要先
   `scripts/build-dexkit-desktop.sh`；`hooks` 模块要 Android SDK（没有就不构建）。
 - 改了 `SymbolResolver` / `SymbolSource` / `DexKitSource`：使用方（红薯助手、哔哩净界）的解析代码摘要会变，要通知它们更新。
-- 发版：改 `build.gradle.kts` 的 version 和 CHANGELOG，打 tag（`v0.2.1` …）并建 GitHub Release；使用方跟着改 `gradle/dexadapt.commit`。
+- 发版：改 `build.gradle.kts` 的 version 和 CHANGELOG，打 tag（`v0.3.0` …）并建 GitHub Release；使用方跟着改 `gradle/dexadapt.commit`。
 - 每个模块的职责见 README 的模块表；新功能先在 `docs/DESIGN.md` 里有位置，再写代码和测试。
 
 ## 模块速查

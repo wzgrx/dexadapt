@@ -30,6 +30,7 @@ class IndexCacheTest {
             assertEquals(name, a.fields.map { listOf(it.name, it.type, it.flags) }, b.fields.map { listOf(it.name, it.type, it.flags) })
             assertEquals(name, a.methods.size, b.methods.size)
             a.methods.zip(b.methods).forEach { (x, y) ->
+                assertEquals(x.orderedStrings,y.orderedStrings)
                 assertEquals(x.signature, listOf(x.signature, x.flags, x.strings, x.calls, x.fieldRefs, x.opcodes, x.numbers, x.annotations), listOf(y.signature, y.flags, y.strings, y.calls, y.fieldRefs, y.opcodes, y.numbers, y.annotations))
             }
         }
