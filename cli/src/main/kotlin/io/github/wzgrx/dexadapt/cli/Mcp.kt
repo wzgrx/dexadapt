@@ -18,6 +18,12 @@ import kotlinx.serialization.json.putJsonObject
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.PrintStream
+import java.util.concurrent.CancellationException
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * `dexadapt mcp`：把命令行的各个命令作为 MCP 工具（标准输入输出上的 JSON-RPC，一行一条消息），
@@ -122,33 +128,100 @@ object Mcp {
         ),
     )
 
-    fun serve(input: java.io.InputStream = System.`in`, output: PrintStream = System.out) {
-        val reader = input.bufferedReader()
-        while (true) {
-            val line = reader.readLine() ?: break
-            if (line.isBlank()) continue
-            val msg = runCatching { json.parseToJsonElement(line).jsonObject }.getOrElse {
-                send(output, error(JsonNull, -32700, "无法解析的 JSON"))
-                continue
-            }
-            val id = msg["id"] ?: continue // 通知（notifications/initialized 等）不用回
-            val method = msg["method"]?.jsonPrimitive?.contentOrNull
-            val params = msg["params"] as? JsonObject ?: JsonObject(emptyMap())
-            val reply = runCatching {
-                when (method) {
-                    "initialize" -> result(id, initialize(params))
-                    "ping" -> result(id, JsonObject(emptyMap()))
-                    "tools/list" -> result(id, buildJsonObject { put("tools", JsonArray(TOOLS.map(::describe))) })
-                    "tools/call" -> result(id, call(params, output))
-                    else -> error(id, -32601, "不支持的方法 $method")
+    /** 常驻客户端关闭输入时取消任务；批量嵌入调用可显式等待队列处理完毕。 */
+    fun serve(input: java.io.InputStream = System.`in`, output: PrintStream = System.out, drainOnEof: Boolean = false) =
+        serveSession(input, output, drainOnEof, ::runIsolated)
+
+    private data class RunResult(val code: Int, val text: String, val truncated: Boolean = false)
+
+    internal class Cancellation {
+        private val cancelled = AtomicBoolean()
+        private val process = AtomicReference<Process?>()
+        val isCancelled: Boolean get() = cancelled.get()
+        fun check() { if (isCancelled) throw CancellationException("任务已取消") }
+        fun attach(value: Process) { process.set(value); if (isCancelled) stop(value) }
+        fun detach(value: Process) { process.compareAndSet(value, null) }
+        fun cancel() { if (cancelled.compareAndSet(false, true)) process.get()?.let(::stop) }
+        private fun stop(value: Process) {
+            Thread({
+                runCatching {
+                    val children = value.toHandle().descendants().use { it.toList() }
+                    children.forEach { it.destroy() }
+                    value.destroy()
+                    if (!value.waitFor(1, TimeUnit.SECONDS)) value.destroyForcibly()
+                    children.filter { it.isAlive }.forEach { it.destroyForcibly() }
                 }
-            }.getOrElse { e -> error(id, -32603, e.message ?: e.toString()) }
-            send(output, reply)
+            }, "dexadapt-cancel").apply { isDaemon = true; start() }
+        }
+    }
+
+    internal fun serveForTest(input: java.io.InputStream, output: PrintStream, runner: (List<String>, Cancellation, (Long) -> Unit) -> Pair<Int, String>) =
+        serveSession(input, output, true) { argv, token, tick ->
+            val (code, text) = runner(argv, token, tick)
+            RunResult(code, text)
+        }
+
+    private fun serveSession(input: java.io.InputStream, output: PrintStream, drainOnEof: Boolean, runner: (List<String>, Cancellation, (Long) -> Unit) -> RunResult) {
+        val jobs = ConcurrentHashMap<JsonElement, Cancellation>()
+        val worker = Executors.newSingleThreadExecutor { task -> Thread(task, "dexadapt-mcp-job").apply { isDaemon = true } }
+        val shutdown = Thread({ jobs.values.forEach { it.cancel() } }, "dexadapt-mcp-shutdown")
+        Runtime.getRuntime().addShutdownHook(shutdown)
+        try {
+            val reader = input.bufferedReader()
+            while (true) {
+                val line = reader.readLine() ?: break
+                if (line.isBlank()) continue
+                val msg = runCatching { json.parseToJsonElement(line).jsonObject }.getOrElse {
+                    send(output, error(JsonNull, -32700, "无法解析的 JSON")); continue
+                }
+                val method = (msg["method"] as? JsonPrimitive)?.contentOrNull
+                val params = msg["params"] as? JsonObject ?: JsonObject(emptyMap())
+                if (method == "notifications/cancelled") {
+                    params["requestId"]?.let { jobs[it]?.cancel() }; continue
+                }
+                val id = msg["id"] ?: continue
+                if (method == "tools/call") {
+                    if (jobs.size >= 8) { send(output, error(id, -32001, "适配任务队列已满")); continue }
+                    val token = Cancellation()
+                    if (jobs.putIfAbsent(id, token) != null) { send(output, error(id, -32600, "请求编号重复")); continue }
+                    worker.execute {
+                        val reply = try {
+                            token.check()
+                            result(id, call(params, output, token, runner))
+                        } catch (_: CancellationException) {
+                            error(id, -32800, "任务已取消")
+                        } catch (e: Exception) {
+                            error(id, -32603, e.message ?: e.toString())
+                        } finally { jobs.remove(id, token) }
+                        send(output, reply)
+                    }
+                } else {
+                    val reply = runCatching {
+                        when (method) {
+                            "initialize" -> result(id, initialize(params))
+                            "ping" -> result(id, JsonObject(emptyMap()))
+                            "tools/list" -> result(id, buildJsonObject { put("tools", JsonArray(TOOLS.map(::describe))) })
+                            else -> error(id, -32601, "不支持的方法 $method")
+                        }
+                    }.getOrElse { e -> error(id, -32603, e.message ?: e.toString()) }
+                    send(output, reply)
+                }
+            }
+        } finally {
+            worker.shutdown()
+            if (drainOnEof) {
+                while (!worker.awaitTermination(1, TimeUnit.SECONDS)) { /* 嵌入调用等待实际句柄。 */ }
+            } else {
+                jobs.values.forEach { it.cancel() }
+                worker.shutdownNow()
+                worker.awaitTermination(3, TimeUnit.SECONDS)
+            }
+            runCatching { Runtime.getRuntime().removeShutdownHook(shutdown) }
         }
     }
 
     private fun initialize(params: JsonObject): JsonObject = buildJsonObject {
-        put("protocolVersion", params["protocolVersion"]?.jsonPrimitive?.contentOrNull ?: PROTOCOL)
+        put("protocolVersion", params["protocolVersion"]?.jsonPrimitive?.contentOrNull?.takeIf { it == PROTOCOL } ?: PROTOCOL)
         putJsonObject("capabilities") { putJsonObject("tools") {} }
         putJsonObject("serverInfo") {
             put("name", "dexadapt")
@@ -160,6 +233,20 @@ object Mcp {
     private fun describe(t: Tool): JsonObject = buildJsonObject {
         put("name", t.name)
         put("description", t.description)
+        putJsonObject("outputSchema") {
+            put("type", "object")
+            putJsonObject("properties") {
+                putJsonObject("tool") { put("type", "string") }
+                putJsonObject("exitCode") { put("type", "integer") }
+                putJsonObject("status") { put("type", "string") }
+                putJsonObject("output") { put("type", "string") }
+                putJsonObject("outputTruncated") { put("type", "boolean") }
+                putJsonObject("outputDirectory") { put("type", "string") }
+                putJsonObject("reportPath") { put("type", "string") }
+                put("data", JsonObject(emptyMap()))
+            }
+            putJsonArray("required") { listOf("tool", "exitCode", "status", "output", "outputTruncated").forEach { add(JsonPrimitive(it)) } }
+        }
         putJsonObject("inputSchema") {
             put("type", "object")
             putJsonObject("properties") {
@@ -174,7 +261,7 @@ object Mcp {
     }
 
     /** 跑一个工具：拼成命令行参数，捕获它打印的内容（标准输出是 MCP 的通道，不能让命令直接写）。 */
-    private fun call(params: JsonObject, channel: PrintStream): JsonObject {
+    private fun call(params: JsonObject, channel: PrintStream, cancellation: Cancellation, runner: (List<String>, Cancellation, (Long) -> Unit) -> RunResult): JsonObject {
         val name = params["name"]?.jsonPrimitive?.contentOrNull ?: error("缺少工具名")
         val tool = TOOLS.firstOrNull { it.name == name } ?: error("没有工具 $name")
         val args = params["arguments"] as? JsonObject ?: JsonObject(emptyMap())
@@ -201,7 +288,7 @@ object Mcp {
         for (p in tool.params) if (p.required && p.name !in args) error("缺少参数 ${p.name}")
 
         val progressToken = (params["_meta"] as? JsonObject)?.get("progressToken")
-        val (code, printed) = runIsolated(argv) { seconds ->
+        val run = runner(argv, cancellation) { seconds ->
             // 客户端给了进度令牌时，长任务（diff、matrix）每 10 秒报一次进度，免得客户端当它卡死超时
             if (progressToken != null) {
                 send(
@@ -218,22 +305,40 @@ object Mcp {
                 )
             }
         }
+        cancellation.check()
+        val code = run.code
+        val captured = run.text
+        val printed = captured.take(CAPTURE_LIMIT)
+        val report = tool.report?.let { r -> out?.let { File(it, r) } }?.takeIf { it.isFile }
         val text = buildString {
             append(printed)
-            val report = tool.report?.let { r -> out?.let { File(it, r) } }?.takeIf { it.isFile }
             if (report != null) {
-                val body = report.readText()
+                val body = report.bufferedReader().use { reader ->
+                    val buffer = CharArray(REPORT_LIMIT + 1)
+                    var count = 0
+                    while (count < buffer.size) { val n = reader.read(buffer, count, buffer.size - count); if (n < 0) break; count += n }
+                    String(buffer, 0, count)
+                }
                 append("\n---\n").append(report.path).append("：\n\n")
                 append(if (body.length > REPORT_LIMIT) body.take(REPORT_LIMIT) + "\n…（截断，完整内容见文件）" else body)
             }
         }
+        val structured = buildJsonObject {
+            put("tool", tool.name); put("exitCode", code); put("status", if (code == 0) "completed" else "failed")
+            put("output", printed); put("outputTruncated", run.truncated || captured.length > CAPTURE_LIMIT)
+            out?.let { put("outputDirectory", File(it).absolutePath) }
+            report?.let { put("reportPath", it.absolutePath) }
+            runCatching { json.parseToJsonElement(printed.trim()) }.getOrNull()?.let { put("data", it) }
+        }
         return buildJsonObject {
             putJsonArray("content") { add(buildJsonObject { put("type", "text"); put("text", text) }) }
-            put("isError", code == 1 || code == 2)
+            put("structuredContent", structured)
+            put("isError", code != 0)
         }
     }
 
     private const val REPORT_LIMIT = 60_000
+    private const val CAPTURE_LIMIT = 1_048_576
 
     /**
      * 在子进程里跑命令行（同一个 JVM 程序、同样的类路径和内存上限），拿回它打印的内容和退出码。
@@ -241,22 +346,43 @@ object Mcp {
      * 混进通道里客户端就解析不了；子进程也让一次调用内存爆掉、崩溃时不连累整个服务。索引有磁盘记录，子进程启动只多一两秒。
      * 子进程的标准错误转到本进程的标准错误（客户端一般记进日志）。[tick] 每 10 秒调用一次（参数是已运行秒数）。
      */
-    private fun runIsolated(argv: List<String>, tick: (Long) -> Unit): Pair<Int, String> {
+    private fun runIsolated(argv: List<String>, cancellation: Cancellation, tick: (Long) -> Unit): RunResult {
         val javaBin = ProcessHandle.current().info().command().orElse("java")
         val cmd = listOf(
             javaBin, "-Xmx${Runtime.getRuntime().maxMemory() / 1048576}m", "--enable-native-access=ALL-UNNAMED",
             "-cp", System.getProperty("java.class.path"), "io.github.wzgrx.dexadapt.cli.MainKt",
         ) + argv
         val p = ProcessBuilder(cmd).redirectError(ProcessBuilder.Redirect.INHERIT).start()
+        cancellation.attach(p)
         p.outputStream.close()
         val out = ByteArrayOutputStream()
-        val reader = Thread({ p.inputStream.use { it.copyTo(out) } }, "dexadapt-mcp-out").apply { isDaemon = true; start() }
-        val started = System.nanoTime()
-        while (!p.waitFor(10, java.util.concurrent.TimeUnit.SECONDS)) tick((System.nanoTime() - started) / 1_000_000_000)
-        reader.join()
-        // 原生库的日志行（I/DexKit: …）不算结果
-        val text = out.toString(Charsets.UTF_8).lines().filterNot { NATIVE_LOG.matches(it) }.joinToString("\n")
-        return p.exitValue() to text
+        var truncated = false
+        val reader = Thread({
+            p.inputStream.use { input ->
+                val buffer = ByteArray(8192)
+                while (true) {
+                    val n = input.read(buffer); if (n < 0) break
+                    val remaining = CAPTURE_LIMIT - out.size()
+                    if (remaining > 0) out.write(buffer, 0, n.coerceAtMost(remaining))
+                    if (n > remaining) truncated = true
+                }
+            }
+        }, "dexadapt-mcp-out").apply { isDaemon = true; start() }
+        try {
+            val started = System.nanoTime()
+            while (!p.waitFor(1, TimeUnit.SECONDS)) {
+                cancellation.check()
+                val seconds = (System.nanoTime() - started) / 1_000_000_000
+                if (seconds > 0 && seconds % 10 == 0L) tick(seconds)
+            }
+            reader.join()
+            cancellation.check()
+            val text = out.toString(Charsets.UTF_8).lines().filterNot { NATIVE_LOG.matches(it) }.joinToString("\n")
+            return RunResult(p.exitValue(), text, truncated)
+        } finally {
+            if (p.isAlive) cancellation.cancel()
+            cancellation.detach(p)
+        }
     }
 
     private val NATIVE_LOG = Regex("^[VDIWEF]/\\w+: .*")
@@ -271,8 +397,7 @@ object Mcp {
     }
 
     private fun send(output: PrintStream, msg: JsonObject) {
-        output.println(msg.toString())
-        output.flush()
+        synchronized(output) { output.println(msg.toString()); output.flush() }
     }
 
     /** 测试用：参数表里的工具名。 */

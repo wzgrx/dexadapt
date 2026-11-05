@@ -28,7 +28,7 @@ class ContractMonitorTest {
         assertEquals(ContractMonitor.Verdict.PASSED, m.verdict("unrelated"))
         assertEquals(ContractMonitor.Verdict.OBSERVING, m.record("feed.bind", null, listOf("hi", 5), null, true))
         assertEquals(ContractMonitor.Verdict.PASSED, m.record("feed.bind", null, listOf(StringBuilder("x"), 100), null, true))
-        assertEquals(mapOf("feed.bind" to "passed"), store.saved["t1"])
+        assertEquals(mapOf("feed.bind" to "passed"), store.saved[m.tableKey])
         // 下次启动同一张表：直接通过
         assertEquals(ContractMonitor.Verdict.PASSED, monitor(store).verdict("feed.bind"))
         // 换了表：重新观察
@@ -63,4 +63,30 @@ class ContractMonitorTest {
         assertTrue(AdaptPolicy.choose(t, null, "c", "a").observe)
         assertTrue(!AdaptPolicy.choose(null, t, "c", "a").observe)
     }
+    @Test fun `changed contract forgets old verdict without changing query identity`() {
+        val store = MemoryStore()
+        fun create(c: Contract) = ContractMonitor(mapOf("x" to c), "same-table", { String::class.java }, store)
+        val old = create(Contract(minCalls = 1))
+        assertEquals(ContractMonitor.Verdict.PASSED, old.record("x", null, listOf(null), null, true))
+        assertEquals(ContractMonitor.Verdict.PASSED, create(Contract(minCalls = 1)).verdict("x"))
+        val next = create(Contract(args = mapOf(0 to ValueRule.NotNull), minCalls = 1))
+        assertEquals(ContractMonitor.Verdict.OBSERVING, next.verdict("x"))
+        assertEquals(ContractMonitor.Verdict.VIOLATED, next.record("x", null, listOf(null), null, true))
+    }
+
+    @Test fun `changed mapped target invalidates contract verdict identity`() {
+        val a = io.github.wzgrx.dexadapt.SymbolTable(1, "same-dex", mapOf("x" to io.github.wzgrx.dexadapt.Resolved.Method("A", "a", emptyList(), "void")), catalog = "same-query")
+        assertTrue(ContractMonitor.key(a) != ContractMonitor.key(a.copy(entries = mapOf("x" to io.github.wzgrx.dexadapt.Resolved.Method("A", "b", emptyList(), "void")))))
+        assertEquals(ContractMonitor.key(a), ContractMonitor.key(a.copy(generatedAt = 999, module = "new")))
+    }
+
+    @Test fun `range refuses all non-finite input and accepts both finite endpoints`() {
+        val c = mapOf("x" to Contract(args = mapOf(0 to ValueRule.Range(0.1, 8.0)), minCalls = 1))
+        for (n in listOf(Double.NaN, Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY)) {
+            val m = ContractMonitor(c, "t", { null })
+            assertEquals(ContractMonitor.Verdict.VIOLATED, m.record("x", null, listOf(n), null, false))
+        }
+        for (n in listOf(0.1, 8.0)) assertEquals(ContractMonitor.Verdict.PASSED, ContractMonitor(c, "t", { null }).record("x", null, listOf(n), null, false))
+    }
+
 }

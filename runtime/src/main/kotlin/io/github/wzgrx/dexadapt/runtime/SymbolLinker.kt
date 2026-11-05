@@ -44,12 +44,36 @@ class SymbolLinker(
 
     @Volatile
     private var state = State(table)
+    private val pinned = ThreadLocal<State?>()
+    private val reads = ThreadLocal<MutableSet<String>?>()
+
+    data class ReadSet<T>(val value: T, val ids: Set<String>)
+
+    /** 一次Hook里的多次读取绑定同一份表；进行中的旧调用不会读到新旧混合数据。 */
+    fun <T> withSnapshot(block: () -> T): T {
+        val previous = pinned.get()
+        pinned.set(state)
+        return try { block() } finally { if (previous == null) pinned.remove() else pinned.set(previous) }
+    }
+
+    /** 安装必须读当前全局表，不能继承触发换表的旧Hook快照。 */
+    fun <T> captureReads(block: () -> T): ReadSet<T> {
+        val previous = reads.get()
+        val previousPin = pinned.get()
+        val ids = LinkedHashSet<String>()
+        reads.set(ids); pinned.set(state)
+        return try { ReadSet(block(), ids.toSet()) } finally {
+            previous?.addAll(ids)
+            if (previous == null) reads.remove() else reads.set(previous)
+            if (previousPin == null) pinned.remove() else pinned.set(previousPin)
+        }
+    }
 
     val table: SymbolTable? get() = state.table
     val supported: Boolean get() = table != null
 
     /** 换成新表（热适配）：连同按旧表查过的结果一起换掉。 */
-    fun replace(newTable: SymbolTable) {
+    fun replace(newTable: SymbolTable?) {
         state = State(newTable)
     }
 
@@ -68,12 +92,12 @@ class SymbolLinker(
     } as Executable
 
     /** [symbol] 是这个版本本来就没有的（[SymbolTable.absent]），不是没适配上。 */
-    fun absent(symbol: Symbol): Boolean = symbol.id in state.absent
+    fun absent(symbol: Symbol): Boolean = symbol.id in (pinned.get() ?: state).absent
 
     fun methodOrNull(symbol: MethodSymbol): Executable? = runCatching { method(symbol) }.getOrNull()
 
     /** [member]（[clazz]、[method]、[field] 查出来的对象）是哪个符号；不是按表查出来的返回 null。 */
-    fun idOf(member: Any): String? = state.ids[member]
+    fun idOf(member: Any): String? = (pinned.get() ?: state).ids[member]
 
     fun field(symbol: FieldSymbol): Field = lookup(symbol) { r: Resolved.Field ->
         load(r.owner).getDeclaredField(r.name).apply { isAccessible = true }.also { f ->
@@ -91,14 +115,15 @@ class SymbolLinker(
 
     /** [symbol] 用不了的原因；能用时为 null。 */
     fun problem(symbol: Symbol): String? {
-        val s = state
+        val s = pinned.get() ?: state
         return if (available(symbol)) null else s.cache[symbol.id]?.exceptionOrNull()?.message
             ?: s.table?.missing?.get(symbol.id) ?: unsupported
     }
 
     @Suppress("UNCHECKED_CAST")
     private fun <R : Resolved> lookup(symbol: Symbol, build: (R) -> Any): Any {
-        val s = state // 整个查找只用这一份表和缓存
+        reads.get()?.add(symbol.id)
+        val s = pinned.get() ?: state // 整个查找只用这一份表和缓存
         return s.cache.getOrPut(symbol.id) {
             runCatching {
                 val t = s.table ?: throw SymbolUnavailable(symbol.id, unsupported)

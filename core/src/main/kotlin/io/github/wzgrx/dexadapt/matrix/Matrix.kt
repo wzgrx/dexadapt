@@ -5,8 +5,8 @@ import io.github.wzgrx.dexadapt.SymbolTable
 import io.github.wzgrx.dexadapt.resolve.SymbolMargin
 
 /** 矩阵里的一个构建：[channel] 相同的按 [versionCode] 从旧到新比较漂移（例如“国内版”“Play 版”）。 */
-data class Build(val id: String, val channel: String, val versionCode: Long, val versionName: String) {
-    val label: String get() = "$versionName $channel"
+data class Build(val id: String, val channel: String, val versionCode: Long, val versionName: String, val packageName: String = "", val codeIdentity: String = "") {
+    val label: String get() = "$versionName $channel" + if (packageName.isEmpty()) "" else " ($packageName ${codeIdentity.take(8)})"
 }
 
 /**
@@ -15,15 +15,19 @@ data class Build(val id: String, val channel: String, val versionCode: Long, val
  * [channelOrder] 决定渠道的先后（没列的排在后面）。
  */
 object Matrix {
-    fun render(
+    /** 兼容单渠道或版本码互不冲突的既有调用方。完整多渠道输入使用renderByBuild。 */
+    fun render(tables: Map<Build, SymbolTable>, margins: Map<Long, List<SymbolMargin>>, channelOrder: List<String> = emptyList(), regenerate: String = ""): String =
+        renderByBuild(tables, tables.keys.associateWith { margins[it.versionCode].orEmpty() }, channelOrder, regenerate)
+
+    fun renderByBuild(
         tables: Map<Build, SymbolTable>,
-        margins: Map<Long, List<SymbolMargin>>,
+        margins: Map<Build, List<SymbolMargin>>,
         channelOrder: List<String> = emptyList(),
         regenerate: String = "",
     ): String = buildString {
         // 列：按渠道、再按版本从旧到新。
         fun rank(c: String) = channelOrder.indexOf(c).let { if (it < 0) Int.MAX_VALUE else it }
-        val builds = tables.keys.sortedWith(compareBy<Build>({ rank(it.channel) }, { it.channel }).thenBy { it.versionCode })
+        val builds = tables.keys.sortedWith(compareBy<Build>({ rank(it.channel) }, { it.channel }).thenBy { it.versionCode }.thenBy { it.packageName }.thenBy { it.codeIdentity })
         val ids = tables.values.flatMap { it.entries.keys + it.missing.keys }.toSortedSet()
         appendLine("# 版本矩阵")
         appendLine()
@@ -37,7 +41,7 @@ object Matrix {
         appendLine("|---|---|---|---|---|---|")
         for (b in builds) {
             val t = tables.getValue(b)
-            val m = margins[b.versionCode].orEmpty().filter { it.singlePoint }
+            val m = margins[b].orEmpty().filter { it.singlePoint }
             appendLine("| ${b.label} | ${b.versionCode} | ${t.entries.size} | ${t.missing.size} | ${m.size} | ${m.count { it.shapeOnly }} |")
         }
         appendLine()
@@ -83,7 +87,7 @@ object Matrix {
         appendLine("逐个去掉查询里的一个条件，候选不再唯一的，说明唯一性只靠这一个条件撑着。标 ⚠ 的靠的是纯形状条件")
         appendLine("（参数、返回值、父类等），最容易被新加的同形状成员打破，优先给它们加字符串、调用关系这类“锚”。")
         appendLine()
-        val single = builds.flatMap { b -> margins[b.versionCode].orEmpty().filter { it.singlePoint }.map { it.id to b } }
+        val single = builds.flatMap { b -> margins[b].orEmpty().filter { it.singlePoint }.map { it.id to b } }
             .groupBy({ it.first }, { it.second })
         if (single.isEmpty()) {
             appendLine("没有。")
@@ -91,7 +95,7 @@ object Matrix {
             appendLine("| 符号 | 出现在 | 关键条件 |")
             appendLine("|---|---|---|")
             for ((id, where) in single.toSortedMap()) {
-                val m = builds.firstNotNullOf { b -> margins[b.versionCode]?.firstOrNull { it.id == id && it.singlePoint } }
+                val m = builds.firstNotNullOf { b -> margins[b]?.firstOrNull { it.id == id && it.singlePoint } }
                 val mark = if (m.shapeOnly) "⚠ " else ""
                 appendLine("| $mark`$id` | ${where.joinToString(" / ") { it.versionName }} | ${m.critical.joinToString(", ") { it.toString().replace("|", "\\|") }} |")
             }
@@ -114,24 +118,27 @@ object Matrix {
      * 同样的数据画成热力图（HTML，自包含）：行是符号、列是构建；绿色和同渠道上一版位置相同，黄色是改了名（查询跟上了），
      * 红色是解析不到，灰色是这个构建没有；⚠ 是单点依赖。可以搜索、按“漂移 / 缺失 / 单点”筛选、点表头排序。
      */
-    fun html(
+    fun html(tables: Map<Build, SymbolTable>, margins: Map<Long, List<SymbolMargin>>, channelOrder: List<String> = emptyList(), title: String = "版本矩阵"): String =
+        htmlByBuild(tables, tables.keys.associateWith { margins[it.versionCode].orEmpty() }, channelOrder, title)
+
+    fun htmlByBuild(
         tables: Map<Build, SymbolTable>,
-        margins: Map<Long, List<SymbolMargin>>,
+        margins: Map<Build, List<SymbolMargin>>,
         channelOrder: List<String> = emptyList(),
         title: String = "版本矩阵",
     ): String {
         fun rank(c: String) = channelOrder.indexOf(c).let { if (it < 0) Int.MAX_VALUE else it }
-        val builds = tables.keys.sortedWith(compareBy<Build>({ rank(it.channel) }, { it.channel }).thenBy { it.versionCode })
+        val builds = tables.keys.sortedWith(compareBy<Build>({ rank(it.channel) }, { it.channel }).thenBy { it.versionCode }.thenBy { it.packageName }.thenBy { it.codeIdentity })
         val ids = tables.values.flatMap { it.entries.keys + it.missing.keys }.toSortedSet()
         val prev = builds.associateWith { b -> builds.lastOrNull { it.channel == b.channel && it.versionCode < b.versionCode } }
-        val single = builds.associate { b -> b.versionCode to margins[b.versionCode].orEmpty().filter { it.singlePoint }.associateBy { it.id } }
+        val single = builds.associate { b -> b to margins[b].orEmpty().filter { it.singlePoint }.associateBy { it.id } }
         var drifted = 0
         val rows = ids.map { id ->
             val kinds = LinkedHashSet<String>()
             val cells = builds.map { b ->
                 val t = tables.getValue(b)
                 val r = t.entries[id]
-                val sp = single[b.versionCode]?.get(id)
+                val sp = single[b]?.get(id)
                 val mark = if (sp != null) (if (sp.shapeOnly) " ⚠" else " ·") else ""
                 if (sp != null) kinds += "single"
                 when {

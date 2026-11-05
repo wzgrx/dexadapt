@@ -112,4 +112,11 @@ class RuntimeTest {
 class Sample {
     private var count: Int = 0
     private fun size(): Int = count
+    @org.junit.Test fun `package-aware selection refuses another client with the same numeric build`() {
+        val table=io.github.wzgrx.dexadapt.SymbolTable(9161100,"dex",emptyMap(),catalog="c",apk="a",packageName="tv.danmaku.bili")
+        org.junit.Assert.assertEquals(AdaptPolicy.Source.NONE,AdaptPolicy.chooseForPackage("com.bilibili.app.in",table,table,"c","a").source)
+        org.junit.Assert.assertTrue(AdaptPolicy.decideForPackage("com.bilibili.app.in","Play",table,table,"c","a"){"dex"} is AdaptPolicy.Decision.Scan)
+        org.junit.Assert.assertEquals(AdaptPolicy.Source.LOCAL,AdaptPolicy.chooseForPackage("tv.danmaku.bili",table,null,"c","a").source)
+    }
+
 }

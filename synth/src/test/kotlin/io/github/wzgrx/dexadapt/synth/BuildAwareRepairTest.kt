@@ -28,4 +28,15 @@ class BuildAwareRepairTest {
         val table=SymbolResolver(index,1).table(candidate.catalog.symbols)
         assertTrue(table.missing.isEmpty());assertEquals("New",(table.entries.getValue(child.id) as Resolved.Method).owner);assertEquals(spec.catalog.contracts,candidate.catalog.contracts)
     }
+    @Test fun `equally supported changes to different targets require review`() {
+        val old=source("boolean")
+        val next=DexIndex.of(listOf(ClassInfo("C",null,emptyList(),0).apply {
+            methods+=MethodInfo("C","a",listOf("int"),"void",0,setOf("anchor"),emptySet(),emptySet())
+            methods+=MethodInfo("C","b",listOf("boolean"),"int",0,setOf("anchor"),emptySet(),emptySet())
+        }))
+        val symbol=MethodSymbol("test.method",MethodQuery(owner=type("C"),shape=MethodShape(params=listOf(type("boolean")),returns=type("void"),strings=listOf("anchor"))))
+        val fix=Repair(old,next).repair(symbol)
+        assertNull(fix.yaml);assertTrue(fix.action.contains("多个"));assertTrue(fix.alternatives.map { it.newLocation }.distinct().size>=2)
+    }
+
 }

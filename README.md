@@ -1,5 +1,16 @@
 # DexAdapt
 
+当前版本：[0.4.0](https://github.com/wzgrx/dexadapt/releases/tag/v0.4.0)。本轮针对红薯净界与哔哩净界共用适配流程增强。
+
+- 契约判定绑定规则和真实目标，规则收紧后重新观察，数值规则拒绝NaN/无穷；不因只改契约重扫DEX。
+- base与代码split使用统一摘要，资源split不改变单代码摘要；安装集合身份区分包名及全部split，表可记录宿主包名。
+- matrix完整支持同版本码的渠道/包名/代码变体，manifest提供variantKey/tablePath，margin-by-build保留独立余量；旧平铺路径只用于无冲突版本。
+- BindingTransaction按实际绑定变化及依赖重装，失败回退；启动阶段功能标记重开。SymbolLinker为单次Hook提供一致快照，安装读取可跟踪。
+- MCP单个重任务队列不阻塞协议读取，支持取消自身子进程、结构化结果、明确错误退出状态与有界输出；stdio关闭取消任务，嵌入调用可显式drainOnEof。
+- repair比较候选，优先保留稳定锚点；同等证据指向不同目标时交由核对，不自动猜。输出保留候选依据，原查询文件不自动修改。
+- 发布可通过DEXADAPT_CONSUMER_MANIFEST及DEXADAPT_REQUIRE_CONSUMERS=1要求真实跨应用角色及两引擎对照；样本路径和APK不进入仓库。
+
+
 给 LSPosed / Xposed 模块用的**通用版本适配工具链和运行时库**。宿主 App 一升级，混淆名全变，模块就得重新适配。
 DexAdapt 让 Hook 点只写一次、跟着版本走：升级时告诉你变了什么、哪里会坏，坏了直接给出修好的查询；
 用户手机上的宿主升级了，模块当场重新适配，不用等发版。
@@ -162,7 +173,7 @@ linker.clazz(MySymbols.feed).resolve().firstField { name = "poi" }            //
 
 索引缓存使用真实DEX内容摘要和载荷校验，默认最多64条/4GiB；`DEXADAPT_CACHE_MAX_ENTRIES`、`DEXADAPT_CACHE_MAX_BYTES`（正整数）可调整，`DEXADAPT_CACHE=off`仍可禁用。缓存格式升级后旧记录不会误用。
 
-- `matrix --incremental`：仅在完整spec、实际引擎字节码、包/构建/全部代码DEX身份一致时复用表和完整余量；manifest.json明确fresh/reused与耗时，`--parity`始终重新跑。默认仍全量计算。相同versionCode但不同构建/DEX拒绝覆盖。
+- `matrix --incremental`：仅在完整spec、实际引擎字节码、包/构建/全部代码DEX身份一致时复用表和完整余量；manifest.json明确fresh/reused与耗时，`--parity`始终重新跑。默认仍全量计算。0.3.0 对同码不同构建拒绝覆盖；0.4.0 起按完整身份分列，避免覆盖。
 - `repair --apk <额外样本> --channel <路径>=cn --out <目录> --json`：使用真实old/new-build，保留pins/absentIn/contract；候选依赖重新绑定，额外样本逐个验证原目标不变，输出repair.json和candidate-spec.json。
 - `upgrade --verify-repairs --parity [--incremental]`：对独立候选重新跑全版本矩阵，原spec不覆盖。Kotlin目录作为源的使用方仍需把经审查的查询写回Kotlin，而不是只改生成YAML。上述选项亦由MCP暴露。
 - 完整代码split可做桌面diff；桌面多代码表使用复合身份，base-only消费者会安全拒绝不匹配表，需要消费者支持完整代码身份后才可部署。单代码APK的身份与匹配语义不变。

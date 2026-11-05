@@ -50,7 +50,7 @@ object Engines {
         require(sources.isNotEmpty()) { "安装包没有代码" }
         if(sources.size==1)return sources.single()
         val delegate=MultiSource(sources)
-        val identity=MatrixCache.hash(sources.joinToString("|"){it.dexSha256})
+        val identity=DexDigest.combine(sources.map { it.dexSha256 })
         return object:SymbolSource by delegate { override val dexSha256=identity }
     }
 

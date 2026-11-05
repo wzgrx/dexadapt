@@ -40,6 +40,8 @@ class Repair(
 ) {
     data class Sample(val source: SymbolSource, val versionCode: Long, val build: String?)
     @Serializable
+    data class Alternative(val removed: String, val newLocation: String, val removedAnchor: Boolean, val retainedAnchors: Int, val retainedConditions: Int)
+    @Serializable
     data class Fix(
         val id: String,
         /** 诊断：哪个条件不满足。 */
@@ -53,6 +55,7 @@ class Repair(
         val checkedBuilds: List<String> = emptyList(),
         @kotlinx.serialization.Transient val candidate: Symbol? = null,
         @kotlinx.serialization.Transient val extra: List<Symbol> = emptyList(),
+        val alternatives: List<Alternative> = emptyList(),
     )
 
     private val oldResolver = SymbolResolver.forBuild(oldSource, oldVersionCode, oldBuild)
@@ -62,13 +65,24 @@ class Repair(
         val before = oldResolver.resolve(symbol).getOrNull()
         val failure = newResolver.resolve(symbol).exceptionOrNull()?.message ?: return Fix(symbol.id, "新版能解析", "不用改", null, null)
         if (before == null && oldBuild !in symbol.absentIn) return Fix(symbol.id, failure, "旧版目标未确认，不自动放宽", null, null)
-        // 1. 放宽：逐个去掉一个条件
+        // 1. 比较全部可回归的候选，优先保留锚点；同等证据落到不同目标时不猜。
+        data class Proposal(val symbol: Symbol, val target: Resolved, val evidence: Alternative)
+        val proposals = ArrayList<Proposal>()
         for ((label, variant) in SymbolMargin.variants(symbol)) {
             val relaxed = withQuery(symbol, variant) ?: continue
             val inNew = checkedTarget(relaxed, newSource, newVersionCode, newBuild) ?: continue
             if (guess != null && inNew != guess) continue
             if (!preserves(symbol, relaxed, emptyList())) continue
-            return Fix(symbol.id, "新版里“$label”这个条件不满足（$failure）", "去掉条件 $label", text(inNew), yamlOf(relaxed), checked(), relaxed)
+            val remaining = SymbolMargin.variants(relaxed)
+            proposals += Proposal(relaxed, inNew, Alternative(label, text(inNew), SymbolMargin.isAnchor(label), remaining.count { SymbolMargin.isAnchor(it.first) }, remaining.size))
+        }
+        val ranked = proposals.sortedWith(compareBy<Proposal> { it.evidence.removedAnchor }
+            .thenByDescending { it.evidence.retainedAnchors }.thenByDescending { it.evidence.retainedConditions }.thenBy { it.evidence.removed })
+        if (ranked.isNotEmpty()) {
+            val best = ranked.first()
+            val peers = ranked.filter { it.evidence.removedAnchor == best.evidence.removedAnchor && it.evidence.retainedAnchors == best.evidence.retainedAnchors && it.evidence.retainedConditions == best.evidence.retainedConditions }
+            if (peers.map { it.target }.distinct().size > 1) return Fix(symbol.id, failure, "多个同等证据的候选指向不同目标，需要核对", null, null, checked(), alternatives = ranked.map { it.evidence })
+            return Fix(symbol.id, "新版里“${best.evidence.removed}”这个条件不满足（$failure）", "去掉条件 ${best.evidence.removed}", text(best.target), yamlOf(best.symbol), checked(), best.symbol, alternatives = ranked.map { it.evidence })
         }
         // 2. 按推测的新位置重新生成
         if (guess != null) {

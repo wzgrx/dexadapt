@@ -46,6 +46,8 @@ data class SymbolTable(
      * 模块 App 侧遇到部分表（例如解析中途被杀）要重扫。
      */
     val partial: Boolean = false,
+    /** 新表标记宿主包名；空值仅用于兼容旧的内置表。 */
+    val packageName: String = "",
 ) {
     /** 推测的位置和推测方法。 */
     @Serializable

@@ -1,6 +1,11 @@
 package io.github.wzgrx.dexadapt.runtime
 
 import io.github.wzgrx.dexadapt.Contract
+import io.github.wzgrx.dexadapt.Hex
+import kotlinx.serialization.builtins.MapSerializer
+import kotlinx.serialization.builtins.serializer
+import kotlinx.serialization.json.Json
+import java.security.MessageDigest
 import io.github.wzgrx.dexadapt.SymbolTable
 import io.github.wzgrx.dexadapt.ValueRule
 import java.util.concurrent.ConcurrentHashMap
@@ -14,7 +19,7 @@ import java.util.concurrent.ConcurrentHashMap
 class ContractMonitor(
     private val contracts: Map<String, Contract>,
     /** 这张表的身份（[key]）；表换了（热适配）要新建一个。 */
-    val tableKey: String,
+    tableKey: String,
     /** 把 `$id` 类型和类名解析成 Class（宿主的 ClassLoader + 符号表）；解析不了返回 null。 */
     private val classOf: (String) -> Class<*>?,
     private val store: Store? = null,
@@ -35,10 +40,12 @@ class ContractMonitor(
         @Volatile var reason: String? = null
     }
 
+    // 老的未绑定规则的判定不能迁移；只重新观察，不需要重新解析DEX。
+    val tableKey: String = "$tableKey-rules2-${rulesFingerprint(contracts)}"
     private val progress = ConcurrentHashMap<String, Progress>()
 
     init {
-        val saved = runCatching { store?.load(tableKey) }.getOrNull().orEmpty()
+        val saved = runCatching { store?.load(this.tableKey) }.getOrNull().orEmpty()
         for ((id, v) in saved) {
             if (id !in contracts) continue
             val p = Progress()
@@ -129,6 +136,7 @@ class ContractMonitor(
             }
             when {
                 n == null -> "不是数字（${v?.javaClass?.name}）"
+                !n.isFinite() -> "不是有限数字"
                 n < rule.min || n > rule.max -> "是 $n，不在 ${rule.min}..${rule.max}"
                 else -> null
             }
@@ -137,6 +145,21 @@ class ContractMonitor(
 
     companion object {
         /** 表的身份：同一份宿主代码（dex 摘要）+ 同一版查询（目录指纹）。 */
-        fun key(table: SymbolTable): String = "${table.dexSha256.take(16)}-${table.catalog}"
+        fun key(table: SymbolTable): String = digest(SymbolTable(
+            versionCode = table.versionCode,
+            dexSha256 = table.dexSha256,
+            entries = table.entries.toSortedMap(),
+            absent = table.absent.sorted(),
+            catalog = table.catalog,
+            guesses = table.guesses.toSortedMap(),
+            packageName = table.packageName,
+        ).toJson())
+
+        private fun rulesFingerprint(contracts: Map<String, Contract>): String {
+            val ordered = contracts.toSortedMap().mapValues { (_, c) -> c.copy(args = c.args.toSortedMap()) }
+            return digest(Json.encodeToString(MapSerializer(String.serializer(), Contract.serializer()), ordered))
+        }
+
+        private fun digest(text: String): String = Hex.of(MessageDigest.getInstance("SHA-256").digest(text.toByteArray(Charsets.UTF_8)))
     }
 }

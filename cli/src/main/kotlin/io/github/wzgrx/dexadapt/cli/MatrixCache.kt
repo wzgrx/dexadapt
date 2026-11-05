@@ -46,12 +46,3 @@ internal object MatrixCache {
         } finally { temp.delete() }
     }
 }
-
-/** 旧版资源路径以版本码命名；冲突必须在写表前失败，不能静默覆盖。 */
-internal class MatrixIdentityGuard {
-    private val seen=HashMap<Long,Pair<String,String>>()
-    fun accept(code:Long,identity:String,path:String) {
-        val previous=seen.putIfAbsent(code,identity to path)
-        require(previous==null || previous.first==identity) { "版本码 $code 存在不同构建/DEX，拒绝覆盖：${previous?.second} 与 $path；请分别输出" }
-    }
-}

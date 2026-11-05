@@ -149,6 +149,20 @@ object AccessFlag {
 }
 
 object DexDigest {
+    /** 资源拆包不参与代码摘要；顺序与类加载优先级一致。单代码APK沿用原摘要。 */
+    fun of(apks: List<File>): String = combine(apks.filter(::hasCode).map(::of))
+
+    fun hasCode(apk: File): Boolean = ZipFile(apk).use { zip ->
+        zip.entries().asSequence().any { it.name.matches(Regex("classes\\d*\\.dex")) }
+    }
+
+    fun combine(digests: List<String>): String {
+        require(digests.isNotEmpty()) { "安装包没有DEX代码" }
+        if (digests.size == 1) return digests.single()
+        val text = "dex-set-v1\n" + digests.joinToString("\n")
+        return io.github.wzgrx.dexadapt.Hex.of(MessageDigest.getInstance("SHA-256").digest(text.toByteArray(Charsets.UTF_8)))
+    }
+
     /** [apk] 里 classes*.dex 按文件名（先长度后字典序）拼起来的 SHA-256，和内置符号表的 dexSha256 同一算法。 */
     fun of(apk: File): String {
         val digest = MessageDigest.getInstance("SHA-256")

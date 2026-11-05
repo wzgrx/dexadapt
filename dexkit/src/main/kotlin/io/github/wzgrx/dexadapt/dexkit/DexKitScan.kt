@@ -1,5 +1,6 @@
 package io.github.wzgrx.dexadapt.dexkit
 
+import io.github.wzgrx.dexadapt.resolve.DexDigest
 import io.github.wzgrx.dexadapt.resolve.MultiSource
 import io.github.wzgrx.dexadapt.resolve.SymbolSource
 import org.luckypray.dexkit.DexKitBridge
@@ -14,7 +15,11 @@ import java.io.File
 class DexKitScan private constructor(private val bridges: ArrayList<DexKitBridge>, dexSha256: String, warn: (String, Throwable) -> Unit) : Closeable {
     val source: SymbolSource
 
-    constructor(apks: List<File>, dexSha256: String, warn: (String, Throwable) -> Unit = { _, _ -> }) : this(open(apks), dexSha256, warn)
+    private data class Input(val apks: List<File>, val digest: String)
+    private constructor(input: Input, warn: (String, Throwable) -> Unit) : this(open(input.apks), input.digest, warn)
+
+    constructor(apks: List<File>, dexSha256: String, warn: (String, Throwable) -> Unit = { _, _ -> }) :
+        this(Input(apks, if (apks.count(DexDigest::hasCode) > 1) DexDigest.of(apks) else dexSha256), warn)
 
     init {
         val sources = bridges.mapIndexed { i, b -> DexKitSource(b, if (i == 0) dexSha256 else "", warn) }

@@ -1,5 +1,6 @@
 package io.github.wzgrx.dexadapt.dexkit
 
+import io.github.wzgrx.dexadapt.resolve.DexDigest
 import io.github.wzgrx.dexadapt.resolve.MultiSource
 import io.github.wzgrx.dexadapt.resolve.SymbolSource
 import org.luckypray.dexkit.DexKitBridge
@@ -31,14 +32,15 @@ object RecyclableScan {
     /** 用 [apks]（base 在前）的数据源跑 [block]；[block] 的异常原样抛出。 */
     fun <T> run(tag: String, apks: List<File>, dexSha256: String, warn: (String, Throwable) -> Unit = { _, _ -> }, block: (SymbolSource) -> T): T {
         require(apks.isNotEmpty()) { "no apk" }
+        val completeDigest = if (apks.count(DexDigest::hasCode) > 1) DexDigest.of(apks) else dexSha256
         val recyclable = if (init(warn)) runCatching { apks.map { bridgeFor(tag, it) } }.onFailure { warn("DexKitCacheBridge unavailable, falling back", it) }.getOrNull() else null
-        if (recyclable == null) return DexKitScan(apks, dexSha256, warn).use { block(it.source) }
+        if (recyclable == null) return DexKitScan(apks, completeDigest, warn).use { block(it.source) }
         // 嵌套 withBridge：每个 APK 的桥在 block 期间都不会被回收
         val opened = ArrayList<DexKitBridge>()
         var result: Result<T>? = null
         fun open(i: Int) {
             if (i == recyclable.size) {
-                val sources = opened.mapIndexed { k, b -> DexKitSource(b, if (k == 0) dexSha256 else "", warn) }
+                val sources = opened.mapIndexed { k, b -> DexKitSource(b, if (k == 0) completeDigest else "", warn) }
                 result = runCatching { block(if (sources.size == 1) sources[0] else MultiSource(sources)) }
                 return
             }

@@ -14,6 +14,7 @@ import io.github.wzgrx.dexadapt.resolve.margins
 import io.github.wzgrx.dexadapt.spec.Spec
 import kotlinx.serialization.json.Json
 import java.io.File
+import kotlinx.serialization.json.jsonPrimitive
 import kotlin.system.exitProcess
 
 private const val USAGE = """dexadapt <命令> [参数]
@@ -173,7 +174,7 @@ private fun resolve(opts: Opts): Int {
     val spec = Spec.read(File(opts.need("spec")))
     Engines.open(File(opts.need("apk")), engine(opts)).use { o ->
         val started = System.currentTimeMillis()
-        val table = SymbolResolver.forBuild(o.source, o.info.versionCode, opts.get("build")).table(spec.catalog.symbols)
+        val table = SymbolResolver.forBuild(o.source, o.info.versionCode, opts.get("build")).table(spec.catalog.symbols).copy(packageName=o.info.packageName)
         val seconds = (System.currentTimeMillis() - started) / 1000.0
         opts.get("out")?.let { File(it).apply { parentFile?.mkdirs() }.writeText(table.toJson() + "\n") }
         println("${o.info.label}: ${table.entries.size} 个找到，${table.missing.size} 个缺失（${"%.1f".format(seconds)} 秒）")
@@ -185,46 +186,46 @@ private fun resolve(opts: Opts): Int {
 private fun matrix(opts: Opts): Int = runMatrix(opts).code
 
 /** 一次 matrix 的结果（[upgrade] 汇总用）。 */
-private class MatrixRun(val code: Int, val tables: Map<Build, SymbolTable>, val margins: Map<Long, List<SymbolMargin>>)
+private class MatrixRun(val code: Int, val tables: Map<Build, SymbolTable>, val margins: Map<Build, List<SymbolMargin>>)
 
 private fun runMatrix(opts: Opts): MatrixRun {
     val spec = Spec.read(File(opts.need("spec")))
     val apks = opts.all("apk").ifEmpty { error("至少给一个 --apk") }.map(::File).distinctBy { it.canonicalPath }
     val channels = opts.all("channel").associate { it.substringBeforeLast('=') to it.substringAfterLast('=') }
     val out = File(opts.get("out") ?: "dexadapt-matrix").apply { mkdirs() }
-    val tables = LinkedHashMap<Build, SymbolTable>();val margins = LinkedHashMap<Long, List<SymbolMargin>>()
+    val tables = LinkedHashMap<Build, SymbolTable>();val margins = LinkedHashMap<Build, List<SymbolMargin>>()
     val parity = ArrayList<String>();val manifest=ArrayList<kotlinx.serialization.json.JsonObject>()
-    val identities=MatrixIdentityGuard()
     val engineIdentity=MatrixCache.engine();val specIdentity=MatrixCache.hash(spec.toJson())
     var failed=false
     for ((number,apk) in apks.withIndex()) {
         println("[${number+1}/${apks.size}] 打开 ${apk.name}")
         val started=System.currentTimeMillis()
         val (build, table) = Engines.open(apk, Engine.DEXLIB).use { o ->
-            val b=Engines.build(apk,o.info,channels);val identity=o.codeIdentity
+            val identity=o.codeIdentity;val b=Engines.build(apk,o.info,channels).copy(packageName=o.info.packageName,codeIdentity=identity)
             val variant=o.info.packageName+"|"+b.id+"|"+identity
-            identities.accept(b.versionCode,variant,apk.path)
             val key=MatrixCache.hash("$specIdentity|$engineIdentity|$variant")
             val cached=if(opts.flag("incremental"))MatrixCache.read(File(out,".matrix-cache"),key) else null
             val pair=if(cached!=null && cached.first.versionCode==o.info.versionCode && cached.first.dexSha256==o.source.dexSha256)cached else {
                 val resolver=SymbolResolver.forBuild(o.source,o.info.versionCode,b.id)
-                val t=resolver.table(spec.catalog.symbols, onProgress = { done,total->if(done%100==0 || done==total)println("  ${b.id} 解析 $done/$total") })
+                val t=resolver.table(spec.catalog.symbols, onProgress = { done,total->if(done%100==0 || done==total)println("  ${b.id} 解析 $done/$total") }).copy(packageName=o.info.packageName)
                 println("  ${b.id} 计算查询余量")
                 val rows=resolver.margins(spec.catalog.symbols)
                 MatrixCache.write(File(out,".matrix-cache"),key,t,rows);t to rows
             }
-            margins[o.info.versionCode]=pair.second
+            margins[b]=pair.second
             val mode=if(cached!=null && cached==pair)"reused" else "fresh"
             manifest+=kotlinx.serialization.json.JsonObject(mapOf("build" to kotlinx.serialization.json.JsonPrimitive(b.id),
                 "package" to kotlinx.serialization.json.JsonPrimitive(o.info.packageName),"versionCode" to kotlinx.serialization.json.JsonPrimitive(b.versionCode),
                 "codeIdentity" to kotlinx.serialization.json.JsonPrimitive(identity),"mode" to kotlinx.serialization.json.JsonPrimitive(mode),
-                "cacheKey" to kotlinx.serialization.json.JsonPrimitive(key),"elapsedMs" to kotlinx.serialization.json.JsonPrimitive(System.currentTimeMillis()-started)))
+                "variantKey" to kotlinx.serialization.json.JsonPrimitive(MatrixCache.hash(variant)),"tablePath" to kotlinx.serialization.json.JsonPrimitive("tables/$key.json"),"cacheKey" to kotlinx.serialization.json.JsonPrimitive(key),"elapsedMs" to kotlinx.serialization.json.JsonPrimitive(System.currentTimeMillis()-started)))
             println("${b.label}（${b.id}）：${pair.first.entries.size} 个找到，${pair.first.missing.size} 个缺失，$mode（${(System.currentTimeMillis()-started)/1000} 秒）")
             b to pair.first
         }
         tables[build]=table
         if(table.missing.isNotEmpty())failed=true
-        File(out,"tables/${build.versionCode}.json").apply { parentFile.mkdirs() }.writeText(table.toJson()+"\n")
+        val row = manifest.last()
+        val tablePath = row.getValue("tablePath").jsonPrimitive.content
+        File(out,tablePath).apply { parentFile.mkdirs() }.writeText(table.toJson()+"\n")
         if(opts.flag("parity")) {
             val kit=Engines.open(apk,Engine.DEXKIT).use { o->SymbolResolver(o.source,o.info.versionCode).table(spec.catalog.symbols) }
             val different=(table.entries.keys+kit.entries.keys).filter { table.entries[it]!=kit.entries[it] }.sorted()
@@ -233,9 +234,23 @@ private fun runMatrix(opts: Opts): MatrixRun {
         }
     }
     File(out,"manifest.json").writeText(kotlinx.serialization.json.JsonArray(manifest).toString()+"\n")
-    File(out,"margin.json").writeText(MarginReport.of(spec.catalog.fingerprint(),margins).toJson()+"\n")
-    File(out,"matrix.md").writeText(Matrix.render(tables,margins,regenerate="由 `dexadapt matrix` 生成；manifest.json区分fresh/reused。"))
-    File(out,"matrix.html").writeText(Matrix.html(tables,margins));parity.forEach(::println)
+    val uniqueCodes = tables.keys.groupBy { it.versionCode }.filterValues { it.size == 1 }
+    for ((code, builds) in tables.keys.groupBy { it.versionCode }) {
+        val legacy = File(out,"tables/$code.json")
+        if (builds.size == 1) legacy.writeText(tables.getValue(builds.single()).toJson()+"\n")
+        else if (legacy.isFile) {
+            val backup = File(out,"legacy-conflicts/$code-${java.util.UUID.randomUUID()}.json").apply { parentFile.mkdirs() }
+            java.nio.file.Files.move(legacy.toPath(),backup.toPath())
+        }
+    }
+    File(out,"margin.json").writeText(MarginReport.of(spec.catalog.fingerprint(),uniqueCodes.mapValues { (_, v) -> margins.getValue(v.single()) }).toJson()+"\n")
+    val byBuild = margins.entries.associate { (b, rows) ->
+        val key = MatrixCache.hash(b.packageName+"|"+b.id+"|"+b.codeIdentity)
+        key to rows.map { row -> MatrixCache.Margin(row.id,row.drops.map { MatrixCache.Drop(it.constraint,it.count) }) }
+    }
+    File(out,"margin-by-build.json").writeText(kotlinx.serialization.json.Json.encodeToString(kotlinx.serialization.builtins.MapSerializer(kotlinx.serialization.serializer<String>(),kotlinx.serialization.builtins.ListSerializer(MatrixCache.Margin.serializer())),byBuild)+"\n")
+    File(out,"matrix.md").writeText(Matrix.renderByBuild(tables,margins,regenerate="由 `dexadapt matrix` 生成；manifest.json区分fresh/reused和完整构建身份。"))
+    File(out,"matrix.html").writeText(Matrix.htmlByBuild(tables,margins));parity.forEach(::println)
     println("输出在 ${out.path}/（tables/、margin.json、matrix.md、matrix.html、manifest.json）")
     return MatrixRun(if(failed)3 else 0,tables,margins)
 }
@@ -604,7 +619,7 @@ private fun upgrade(opts: Opts): Int {
         appendLine("| 版本 | versionCode | 解析到 | 缺失 | 单点依赖 | 其中仅靠形状 |")
         appendLine("|---|---|---|---|---|---|")
         for ((b, t) in m.tables) {
-            val sp = m.margins[b.versionCode].orEmpty().filter { it.singlePoint }
+            val sp = m.margins[b].orEmpty().filter { it.singlePoint }
             appendLine("| ${b.label} | ${b.versionCode} | ${t.entries.size} | ${t.missing.size} | ${sp.size} | ${sp.count { it.shapeOnly }} |")
         }
         appendLine()

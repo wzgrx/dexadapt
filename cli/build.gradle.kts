@@ -41,3 +41,14 @@ distributions {
         }
     }
 }
+
+// 发布时显式提供跨模块样本，必须新跑，不能把之前无样本的skip当作回归通过。
+tasks.test {
+    val manifest = providers.environmentVariable("DEXADAPT_CONSUMER_MANIFEST").orNull?.takeIf { it.isNotBlank() }
+    inputs.property("requireConsumerSamples", providers.environmentVariable("DEXADAPT_REQUIRE_CONSUMERS").getOrElse("0"))
+    if (manifest != null) {
+        inputs.file(manifest)
+        outputs.upToDateWhen { false }
+        maxHeapSize = "6g"
+    }
+}

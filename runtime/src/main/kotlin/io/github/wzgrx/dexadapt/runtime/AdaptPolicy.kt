@@ -40,6 +40,15 @@ object AdaptPolicy {
         }
     }
 
+    /** 新表严格核对包名；旧内置表的空包名由调用方按资源路径隔离后兼容。 */
+    fun chooseForPackage(packageName: String, local: SymbolTable?, bundled: SymbolTable?, catalog: String, apkIdentity: String?): Choice =
+        choose(local?.takeIf { it.packageName.isEmpty() || it.packageName == packageName },
+            bundled?.takeIf { it.packageName.isEmpty() || it.packageName == packageName }, catalog, apkIdentity)
+
+    fun decideForPackage(packageName: String, host: String, bundled: SymbolTable?, local: SymbolTable?, catalog: String, apkIdentity: String, dexDigest: () -> String?): Decision =
+        decide(host, bundled?.takeIf { it.packageName.isEmpty() || it.packageName == packageName },
+            local?.takeIf { it.packageName.isEmpty() || it.packageName == packageName }, catalog, apkIdentity, dexDigest)
+
     /** 模块 App 侧要不要扫描。 */
     sealed interface Decision {
         /** 不用扫；[clearLocal] 为真时本机表已经多余（内置表核对一致），可以清掉。 */
