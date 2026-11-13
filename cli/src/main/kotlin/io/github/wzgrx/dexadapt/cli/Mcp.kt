@@ -61,6 +61,16 @@ object Mcp {
             ),
         ),
         Tool(
+            "probe", "只解析，不写适配表、不算余量。对照旧 spec，列出目标变化、直接失败及下游依赖失败。",
+            listOf(
+                Param("spec", "string", "spec 文件", true), Param("apk", "string", "安装包路径", true),
+                Param("baseline", "string", "对照 spec（在同一个安装包上解析）"),
+                Param("id", "array", "只查指定符号及其下游依赖"), Param("build", "string", "已核对的构建标识"),
+                Param("engine", "string", "dexlib 或 dexkit"), Param("json", "boolean", "输出 JSON"),
+                Param("out", "string", "报告文件路径"),
+            ),
+        ),
+        Tool(
             "matrix", "多个版本一起解析：符号表、余量（单点依赖的查询）、版本矩阵（漂移）；parity 时再用 DexKit 解析要求逐条一致。",
             listOf(
                 Param("spec", "string", "spec 文件", true), Param("apk", "array", "安装包路径（多个）", true),
@@ -348,9 +358,10 @@ object Mcp {
      */
     private fun runIsolated(argv: List<String>, cancellation: Cancellation, tick: (Long) -> Unit): RunResult {
         val javaBin = ProcessHandle.current().info().command().orElse("java")
+        val classpath = System.getProperty("dexadapt.test.cliClasspath") ?: System.getProperty("java.class.path")
         val cmd = listOf(
             javaBin, "-Xmx${Runtime.getRuntime().maxMemory() / 1048576}m", "--enable-native-access=ALL-UNNAMED",
-            "-cp", System.getProperty("java.class.path"), "io.github.wzgrx.dexadapt.cli.MainKt",
+            "-cp", classpath, "io.github.wzgrx.dexadapt.cli.MainKt",
         ) + argv
         val p = ProcessBuilder(cmd).redirectError(ProcessBuilder.Redirect.INHERIT).start()
         cancellation.attach(p)

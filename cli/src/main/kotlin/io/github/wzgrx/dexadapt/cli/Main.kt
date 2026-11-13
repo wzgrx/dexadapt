@@ -25,6 +25,9 @@ private const val USAGE = """dexadapt <命令> [参数]
   resolve --spec <spec.yaml> --apk <安装包> [--build <构建标识>] [--engine dexlib|dexkit] [--out <table.json>]
       按 spec 解析一个安装包，得到符号表。给了 --build 时用这个构建的钉子和“没有”的标注。
 
+  probe --spec <spec.yaml> --apk <安装包> [--baseline <旧spec>] [--build <构建标识>]
+      [--id <符号> ...] [--engine dexlib|dexkit] [--json] [--out <报告文件>]
+      只解析；指定 --id 时也检查下游依赖。对照旧 spec，退化或目标变化返回 3。
   matrix --spec <spec.yaml> --apk <安装包> [--apk ...] [--channel <安装包>=<渠道>] [--parity] [--incremental] [--out <目录>]
       多个版本一起解析：每个版本的符号表、余量（单点依赖）、版本矩阵（漂移）；--parity 再用 DexKit 解析一遍、
       要求和 dexlib 逐条相同。输出 tables/<versionCode>.json、margin.json、matrix.md、manifest.json；--incremental区分fresh/reused，parity始终新跑。
@@ -106,6 +109,7 @@ fun run(args: List<String>): Int {
     return when (cmd) {
         "inspect" -> inspect(opts)
         "resolve" -> resolve(opts)
+        "probe" -> probe(opts)
         "matrix" -> matrix(opts)
         "export" -> export(opts)
         "diff" -> diff(opts)
@@ -227,10 +231,28 @@ private fun runMatrix(opts: Opts): MatrixRun {
         val tablePath = row.getValue("tablePath").jsonPrimitive.content
         File(out,tablePath).apply { parentFile.mkdirs() }.writeText(table.toJson()+"\n")
         if(opts.flag("parity")) {
-            val kit=Engines.open(apk,Engine.DEXKIT).use { o->SymbolResolver(o.source,o.info.versionCode).table(spec.catalog.symbols) }
-            val different=(table.entries.keys+kit.entries.keys).filter { table.entries[it]!=kit.entries[it] }.sorted()
-            parity+="${build.label}: "+if(different.isEmpty())"DexKit 一致（fresh）" else "DexKit 不一致 ${different.size} 个：${different.take(10).joinToString()}"
-            if(different.isNotEmpty())failed=true
+            Engines.open(apk, Engine.DEXKIT).use { o ->
+                val kit = SymbolResolver.forBuild(o.source, o.info.versionCode, build.id).table(spec.catalog.symbols)
+                val different = (table.entries.keys + kit.entries.keys + table.missing.keys + kit.missing.keys +
+                    table.absent + kit.absent).filter {
+                    table.entries[it] != kit.entries[it] || (it in table.missing) != (it in kit.missing) ||
+                        (it in table.absent) != (it in kit.absent)
+                }.sorted()
+                val sameDex = table.dexSha256 == kit.dexSha256
+                parity += "${build.label}: " + when {
+                    !sameDex -> "DexKit 完整 DEX 摘要不一致"
+                    different.isNotEmpty() -> "DexKit 不一致 ${different.size} 个：${different.take(10).joinToString()}"
+                    else -> "DexKit 一致（相同构建选择器，fresh）"
+                }
+                if (!sameDex || different.isNotEmpty()) failed = true
+                // 保留原来的设备首次适配检查（不使用手工构建标识）；比对基于最终目标，已知缺失不参与。
+                val unknown = SymbolResolver.forBuild(o.source, o.info.versionCode, null).table(spec.catalog.symbols)
+                val drift = table.entries.keys.filter { table.entries[it] != unknown.entries[it] }.sorted()
+                if (drift.isNotEmpty()) {
+                    parity += "${build.label}: DexKit 未知构建和内置表有 ${drift.size} 个差异：${drift.take(10).joinToString()}"
+                    failed = true
+                }
+            }
         }
     }
     File(out,"manifest.json").writeText(kotlinx.serialization.json.JsonArray(manifest).toString()+"\n")

@@ -37,7 +37,7 @@ class McpTest {
             assertEquals("dexadapt", replies[0]["result"]!!.jsonObject["serverInfo"]!!.jsonObject["name"]!!.jsonPrimitive.content)
             val tools = replies[1]["result"]!!.jsonObject["tools"]!!.jsonArray.map { it.jsonObject["name"]!!.jsonPrimitive.content }
             assertEquals(Mcp.toolNames, tools)
-            assertTrue("diff" in tools && "libs" in tools && "repair" in tools)
+            assertTrue("diff" in tools && "libs" in tools && "repair" in tools && "probe" in tools)
             val call = replies[2]["result"]!!.jsonObject
             assertEquals("false", call["isError"]!!.jsonPrimitive.content)
             assertTrue(call["content"]!!.jsonArray[0].jsonObject["text"]!!.jsonPrimitive.content.contains("1 个符号"))

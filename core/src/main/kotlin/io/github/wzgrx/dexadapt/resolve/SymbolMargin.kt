@@ -7,6 +7,7 @@ import io.github.wzgrx.dexadapt.FieldSymbol
 import io.github.wzgrx.dexadapt.MethodQuery
 import io.github.wzgrx.dexadapt.MethodShape
 import io.github.wzgrx.dexadapt.MethodSymbol
+import io.github.wzgrx.dexadapt.MethodVariant
 import io.github.wzgrx.dexadapt.Symbol
 import io.github.wzgrx.dexadapt.TypeRef
 
@@ -48,7 +49,7 @@ data class SymbolMargin(val id: String, val drops: List<Drop>) {
         )
 
         /** 类查询里第 i 个方法条件的子条件前缀，例如 `methods[0].strings["x"]`。 */
-        private val METHOD_PART = Regex("""^methods\[\d+]\.""")
+        private val METHOD_PART = Regex("""^(?:methods|variants)\[\d+]\.""")
 
         /**
          * [label]（[variants] 给的条件说明）是不是“锚”条件（字符串、调用关系等，去掉它查询就失去起点）。
@@ -108,7 +109,20 @@ data class SymbolMargin(val id: String, val drops: List<Drop>) {
         private fun methodVariants(q: MethodQuery): List<Pair<String, Any>> = buildList {
             val s = q.shape
             if (q.owner == null) q.packagePrefix?.let { add("packagePrefix" to q.copy(packagePrefix = null)) }
-            for ((label, shape) in shapeVariants(s)) add(label to q.copy(shape = shape))
+            for ((label, shape) in shapeVariants(s)) {
+                // 空的顶层 shape 表示省略；删掉最后一个条件时仍应检查放宽后的分支。
+                val relaxed = if (shape == MethodShape() && q.variants.isNotEmpty())
+                    q.copy(shape = shape, variants = listOf(MethodVariant(shape)) + q.variants)
+                else q.copy(shape = shape)
+                add(label to relaxed)
+            }
+            q.variants.forEachIndexed { i, v ->
+                for ((label, shape) in shapeVariants(v.shape)) {
+                    add("variants[$i].$label" to q.copy(variants = q.variants.mapIndexed { j, item ->
+                        if (i == j) item.copy(shape = shape) else item
+                    }))
+                }
+            }
             q.calls.forEachIndexed { i, m -> add("calls[${m.id}]" to q.copy(calls = q.calls.without(i))) }
             q.callsExact.forEachIndexed { i, c -> add("callsExact[$c]" to q.copy(callsExact = q.callsExact.without(i))) }
             q.usesFields.forEachIndexed { i, f -> add("usesFields[${f.id}]" to q.copy(usesFields = q.usesFields.without(i))) }

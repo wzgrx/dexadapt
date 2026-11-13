@@ -8,6 +8,7 @@ import io.github.wzgrx.dexadapt.FieldSymbol
 import io.github.wzgrx.dexadapt.MethodQuery
 import io.github.wzgrx.dexadapt.MethodShape
 import io.github.wzgrx.dexadapt.MethodSymbol
+import io.github.wzgrx.dexadapt.MethodVariant
 import io.github.wzgrx.dexadapt.Pin
 import io.github.wzgrx.dexadapt.Symbol
 import io.github.wzgrx.dexadapt.TypeRef
@@ -60,7 +61,8 @@ data class Spec(val app: String?, val catalog: Catalog) {
     }
 
     fun encode(): JsonObject = buildJsonObject {
-        put("dexadapt", JsonPrimitive(VERSION))
+        val hasVariants = catalog.symbols.any { it is MethodSymbol && it.query.variants.isNotEmpty() }
+        put("dexadapt", JsonPrimitive(if (hasVariants) VERSION else 1))
         app?.let { put("app", JsonPrimitive(it)) }
         put("symbols", buildJsonArray { catalog.symbols.forEach { add(SpecCodec.symbol(it, catalog.contracts[it.id])) } })
     }
@@ -69,7 +71,8 @@ data class Spec(val app: String?, val catalog: Catalog) {
     fun withSymbols(replacements: Collection<Symbol>): Spec {
         require(replacements.map { it.id }.distinct().size == replacements.size) { "候选符号id重复" }
         val original = encode()
-        val changed = Spec(null, Catalog(replacements.toList())).encode()["symbols"]!!.jsonArray
+        val replacement = Spec(null, Catalog(replacements.toList())).encode()
+        val changed = replacement["symbols"]!!.jsonArray
             .associateBy { it.jsonObject["id"]!!.jsonPrimitive.content }
         val seen = HashSet<String>()
         val merged = original["symbols"]!!.jsonArray.map { item ->
@@ -77,11 +80,13 @@ data class Spec(val app: String?, val catalog: Catalog) {
             val next = changed[id]?.jsonObject
             if(next==null)item else JsonObject(old + next)
         } + changed.filterKeys { it !in seen }.values
-        return decode(JsonObject(original + ("symbols" to JsonArray(merged))))
+        val version = maxOf(original.getValue("dexadapt").jsonPrimitive.longOrNull!!,
+            replacement.getValue("dexadapt").jsonPrimitive.longOrNull!!)
+        return decode(JsonObject(original + ("symbols" to JsonArray(merged)) + ("dexadapt" to JsonPrimitive(version))))
     }
 
     companion object {
-        const val VERSION = 1
+        const val VERSION = 2
         private val pretty = Json { prettyPrint = true; prettyPrintIndent = "  " }
 
         fun fromJson(text: String): Spec = decode(Json.parseToJsonElement(text).jsonObject)
@@ -92,11 +97,16 @@ data class Spec(val app: String?, val catalog: Catalog) {
         fun read(file: java.io.File): Spec = if (file.name.endsWith(".json")) fromJson(file.readText()) else fromYaml(file.readText())
 
         fun decode(root: JsonObject): Spec {
-            val version = root["dexadapt"]?.jsonPrimitive?.longOrNull ?: VERSION.toLong()
+            val version = root["dexadapt"]?.let {
+                it.jsonPrimitive.longOrNull ?: error("dexadapt 必须是整数版本")
+            } ?: 1L
             require(version <= VERSION) { "spec 格式版本 $version 比这个 DexAdapt 新（支持到 $VERSION）" }
             val app = root["app"]?.jsonPrimitive?.contentOrNull
             val items = root["symbols"]?.jsonArray ?: error("spec 里没有 symbols")
             val objects = items.map { it.jsonObject }
+            require(version >= 2 || objects.none { it["method"]?.jsonObject?.get("variants") != null }) {
+                "method.variants 需要 dexadapt: 2"
+            }
             val contracts = objects.mapNotNull { o ->
                 o["contract"]?.let { c -> o["id"]!!.jsonPrimitive.content to Json.decodeFromJsonElement(io.github.wzgrx.dexadapt.Contract.serializer(), c) }
             }.toMap()
@@ -187,6 +197,11 @@ internal object SpecCodec {
         opt("owner", q.owner?.let { JsonPrimitive(type(it)) })
         opt("packagePrefix", q.packagePrefix?.let(::JsonPrimitive))
         shapeInto(q.shape)
+        if (q.variants.isNotEmpty()) put("variants", JsonArray(q.variants.map { v -> obj {
+            shapeInto(v.shape)
+            if (v.builds.isNotEmpty()) put("builds", strings(v.builds.sorted()))
+            if (v.dexSha256.isNotEmpty()) put("dexSha256", strings(v.dexSha256.sorted()))
+        } }))
         if (q.calls.isNotEmpty()) put("calls", refs(q.calls))
         if (q.callsExact.isNotEmpty()) put("callsExact", strings(q.callsExact))
         if (q.usesFields.isNotEmpty()) put("usesFields", refs(q.usesFields))
@@ -260,6 +275,13 @@ internal object SpecCodec {
                         calls = q.methods("calls"), callsExact = q.list("callsExact"),
                         usesFields = q.list("usesFields").map { ref(it) as FieldSymbol }, onlyTheseFields = q.bool("onlyTheseFields") == true,
                         excludes = q.methods("excludes"), calledBy = q.methods("calledBy"),
+                        variants = q["variants"]?.jsonArray?.map { item ->
+                            val variant = item.jsonObject
+                            val unknown = variant.keys - setOf("name", "params", "returns", "strings", "static", "numbers",
+                                "annotations", "opcodes", "builds", "dexSha256")
+                            require(unknown.isEmpty()) { "$id: unsupported method variant keys: $unknown" }
+                            MethodVariant(variant.shape(), variant.list("builds").toSet(), variant.list("dexSha256").toSet())
+                        }.orEmpty(),
                     ))
                 }
                 o["field"] != null -> o["field"]!!.jsonObject.let { q ->

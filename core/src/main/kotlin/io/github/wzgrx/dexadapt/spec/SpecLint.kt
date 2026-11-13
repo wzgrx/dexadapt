@@ -4,6 +4,7 @@ import io.github.wzgrx.dexadapt.Catalog
 import io.github.wzgrx.dexadapt.ClassQuery
 import io.github.wzgrx.dexadapt.ClassSymbol
 import io.github.wzgrx.dexadapt.FieldSymbol
+import io.github.wzgrx.dexadapt.MethodShape
 import io.github.wzgrx.dexadapt.MethodSymbol
 import io.github.wzgrx.dexadapt.Resolved
 import io.github.wzgrx.dexadapt.Symbol
@@ -75,19 +76,24 @@ object SpecLint {
             }
             is MethodSymbol -> {
                 val q = s.query
-                val sh = q.shape
-                if (q.owner == null && q.packagePrefix == null && sh.strings.isEmpty() && q.calledBy.isEmpty()) {
-                    add(Issue(Level.WARNING, s.id, "没有所属类、包、字符串或调用者做起点：手机上要扫全部方法，又慢又容易多命中"))
+                q.shapesFor(null, "").forEach { (label, sh) ->
+                    val branch = if (label == "shape") "" else "$label："
+                    if (sh == MethodShape() && q.variants.isNotEmpty()) {
+                        add(Issue(Level.ERROR, s.id, branch + "备用签名不能没有形状条件"))
+                    }
+                    if (q.owner == null && q.packagePrefix == null && sh.strings.isEmpty() && q.calledBy.isEmpty()) {
+                        add(Issue(if (q.variants.isEmpty()) Level.WARNING else Level.ERROR, s.id, branch + "没有所属类、包、字符串或调用者做起点：手机上要扫全部方法，又慢又容易多命中"))
+                    }
+                    val anchors = sh.strings.isNotEmpty() || q.calls.isNotEmpty() || q.callsExact.isNotEmpty() || q.calledBy.isNotEmpty() ||
+                        q.usesFields.isNotEmpty() || sh.numbers.isNotEmpty() || sh.annotations.isNotEmpty() || (sh.name != null && !OBFUSCATED_MEMBER.matches(sh.name))
+                    if (!anchors && q.owner != null) add(Issue(Level.HINT, s.id, branch + "只靠所属类里的方法形状：类里加一个同形状的方法就会多命中"))
+                    if (sh.name != null && OBFUSCATED_MEMBER.matches(sh.name)) {
+                        add(Issue(Level.WARNING, s.id, branch + "按混淆的方法名 ${sh.name} 找：下个版本多半会变"))
+                    }
+                    if (sh.isStatic == true && sh.name == "<init>") add(Issue(Level.ERROR, s.id, branch + "构造方法不可能是静态的"))
+                    if (sh.opcodes.size > 30) add(Issue(Level.HINT, s.id, branch + "操作码序列很长（${sh.opcodes.size} 个）：方法体一改就失效，挑几条有特征的就够"))
+                    if (sh.strings.any { it.length < 4 }) add(Issue(Level.HINT, s.id, branch + "字符串 ${sh.strings.filter { it.length < 4 }} 太短，到处都有，不像特征"))
                 }
-                val anchors = sh.strings.isNotEmpty() || q.calls.isNotEmpty() || q.callsExact.isNotEmpty() || q.calledBy.isNotEmpty() ||
-                    q.usesFields.isNotEmpty() || sh.numbers.isNotEmpty() || sh.annotations.isNotEmpty() || (sh.name != null && !OBFUSCATED_MEMBER.matches(sh.name))
-                if (!anchors && q.owner != null) add(Issue(Level.HINT, s.id, "只靠所属类里的方法形状：类里加一个同形状的方法就会多命中"))
-                if (sh.name != null && OBFUSCATED_MEMBER.matches(sh.name)) {
-                    add(Issue(Level.WARNING, s.id, "按混淆的方法名 ${sh.name} 找：下个版本多半会变"))
-                }
-                if (sh.isStatic == true && sh.name == "<init>") add(Issue(Level.ERROR, s.id, "构造方法不可能是静态的"))
-                if (sh.opcodes.size > 30) add(Issue(Level.HINT, s.id, "操作码序列很长（${sh.opcodes.size} 个）：方法体一改就失效，挑几条有特征的就够"))
-                if (sh.strings.any { it.length < 4 }) add(Issue(Level.HINT, s.id, "字符串 ${sh.strings.filter { it.length < 4 }} 太短，到处都有，不像特征"))
             }
             is FieldSymbol -> {
                 val q = s.query

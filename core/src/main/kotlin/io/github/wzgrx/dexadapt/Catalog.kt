@@ -59,7 +59,7 @@ class Catalog(val symbols: List<Symbol>, val contracts: Map<String, Contract> = 
         val text = engine + symbols.joinToString("\n") { s ->
             val query = when (s) {
                 is ClassSymbol -> s.query.toString()
-                is MethodSymbol -> s.query.toString()
+                is MethodSymbol -> s.query.toString().let { if (s.query.variants.isEmpty()) it.removeSuffix(", variants=[])") + ")" else it }
                 is FieldSymbol -> s.query.toString()
             }
             "${s.id}|$query|${s.pins.entries.sortedBy { it.key }}|${s.absentIn.sorted()}"

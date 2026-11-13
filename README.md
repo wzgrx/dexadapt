@@ -173,6 +173,7 @@ linker.clazz(MySymbols.feed).resolve().firstField { name = "poi" }            //
 
 索引缓存使用真实DEX内容摘要和载荷校验，默认最多64条/4GiB；`DEXADAPT_CACHE_MAX_ENTRIES`、`DEXADAPT_CACHE_MAX_BYTES`（正整数）可调整，`DEXADAPT_CACHE=off`仍可禁用。缓存格式升级后旧记录不会误用。
 
+- `probe --spec hooks.yaml --apk old.apk --baseline previous.yaml --id player.menu --json`：只解析指定符号及其下游，不做余量扫描。对同一个包比较旧、新 spec，报告目标变化、缺失、依赖链、DEX 摘要和耗时；有缺失、退化或目标变化时返回 3。CLI 和 MCP 均可用。脚本使用 DexKit 时请加 `--out report.json`，原生库可能往终端输出日志。
 - `matrix --incremental`：仅在完整spec、实际引擎字节码、包/构建/全部代码DEX身份一致时复用表和完整余量；manifest.json明确fresh/reused与耗时，`--parity`始终重新跑。默认仍全量计算。0.3.0 对同码不同构建拒绝覆盖；0.4.0 起按完整身份分列，避免覆盖。
 - `repair --apk <额外样本> --channel <路径>=cn --out <目录> --json`：使用真实old/new-build，保留pins/absentIn/contract；候选依赖重新绑定，额外样本逐个验证原目标不变，输出repair.json和candidate-spec.json。
 - `upgrade --verify-repairs --parity [--incremental]`：对独立候选重新跑全版本矩阵，原spec不覆盖。Kotlin目录作为源的使用方仍需把经审查的查询写回Kotlin，而不是只改生成YAML。上述选项亦由MCP暴露。

@@ -44,6 +44,8 @@ distributions {
 
 // 发布时显式提供跨模块样本，必须新跑，不能把之前无样本的skip当作回归通过。
 tasks.test {
+    // Gradle 的测试工作进程用隔离的类加载器，java.class.path 不一定含被测程序依赖。
+    systemProperty("dexadapt.test.cliClasspath", sourceSets.test.get().runtimeClasspath.asPath)
     val manifest = providers.environmentVariable("DEXADAPT_CONSUMER_MANIFEST").orNull?.takeIf { it.isNotBlank() }
     inputs.property("requireConsumerSamples", providers.environmentVariable("DEXADAPT_REQUIRE_CONSUMERS").getOrElse("0"))
     if (manifest != null) {

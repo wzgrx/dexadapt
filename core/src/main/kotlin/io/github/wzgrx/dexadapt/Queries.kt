@@ -75,6 +75,20 @@ data class MethodShape(
     val opcodes: List<String> = emptyList(),
 )
 
+/** 同一个方法符号的备用签名；选择器只在明确匹配当前构建时缩小查询范围。 */
+data class MethodVariant(
+    val shape: MethodShape,
+    val builds: Set<String> = emptySet(),
+    val dexSha256: Set<String> = emptySet(),
+) {
+    init {
+        require(builds.none(String::isBlank)) { "method variant has an empty build selector" }
+        require(dexSha256.all { it.matches(Regex("[0-9a-f]{64}")) }) { "method variant requires lowercase SHA-256 selectors" }
+    }
+
+    override fun toString() = "MethodVariant(shape=$shape, builds=${builds.sorted()}, dexSha256=${dexSha256.sorted()})"
+}
+
 data class MethodQuery(
     val owner: TypeRef? = null,
     /** When [owner] is null, the declaring class is searched in this package. */
@@ -95,7 +109,22 @@ data class MethodQuery(
      * 找到的方法调用时，靠它区分。没有 [owner]、字符串和包名时，候选就是调用者调用到的方法。
      */
     val calledBy: List<MethodSymbol> = emptyList(),
-)
+    val variants: List<MethodVariant> = emptyList(),
+) {
+    /** 备用签名替换整个 shape，所属类和调用关系仍与原签名共用。 */
+    fun shapesFor(build: String?, dexSha256: String): List<Pair<String, MethodShape>> {
+        if (variants.isEmpty()) return listOf("shape" to shape)
+        val indexed = variants.mapIndexed { i, v -> "variants[$i]" to v }
+        val exact = indexed.filter { dexSha256 in it.second.dexSha256 }
+        val byBuild = indexed.filter { build != null && build in it.second.builds }
+        return when {
+            exact.isNotEmpty() -> exact.map { (label, v) -> label to v.shape }
+            byBuild.isNotEmpty() -> byBuild.map { (label, v) -> label to v.shape }
+            else -> (if (shape == MethodShape() && variants.isNotEmpty()) emptyList() else listOf("shape" to shape)) +
+                indexed.map { (label, v) -> label to v.shape }
+        }
+    }
+}
 
 data class FieldQuery(
     val owner: TypeRef,

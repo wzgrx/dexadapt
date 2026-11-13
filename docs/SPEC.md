@@ -71,6 +71,28 @@ symbols:                 # 符号列表，顺序随意，引用在读入时解�
 | `params`、`returns`、`static` | 形状 | 形状 |
 | `opcodes` | 指令过滤器：这些操作码按顺序出现（中间可以夹别的），smali 写法 | 形状 |
 
+### 同一符号的多个签名
+
+使用此字段时，文件顶层需写 `dexadapt: 2`，避免旧版本静默忽略分支。
+
+```yaml
+  - id: player.menu
+    method:
+      owner: $player.page
+      name: openMenu
+      params: [int]
+      variants:
+        - name: openMenu
+          params: [int, boolean]
+          builds: [CN_9190400]
+```
+
+`variants` 每项是完整的方法形状，不继承顶层的 `name`、`params`、`returns` 或字符串；
+共用顶层的所属类、包、调用与字段关系。可省略顶层形状，但每个备用签名都要有形状条件。
+`dexSha256` 接受完整代码摘要列表（64 位小写十六进制）。命中摘要的分支优先，接下来是匹配构建标识的分支；
+没有匹配的选择器时检查所有形状。同一个方法被重复命中只算一个，不同方法则报歧义。候选仍要通过常规校验；
+手工钉死的位置也必须匹配当前允许的形状。符号 ID 不变，但 Hook 代码仍须能处理各版本的实际参数列表。
+
 ## 字段（`field`）
 
 `owner`（必填）、`name`、`type`、`static`、`accessedIn`（被这些方法读写，区分同类型的多个字段）。

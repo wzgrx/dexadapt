@@ -42,6 +42,7 @@ object SymbolGraph {
             is MethodSymbol -> with(symbol.query) {
                 ref("owner", owner)
                 shape("shape", shape)
+                variants.forEachIndexed { i, v -> shape("variants[$i]", v.shape) }
                 calls.forEachIndexed { i, m -> add("calls[$i]" to (m as Symbol?)) }
                 usesFields.forEachIndexed { i, f -> add("usesFields[$i]" to (f as Symbol?)) }
                 excludes.forEachIndexed { i, m -> add("excludes[$i]" to (m as Symbol?)) }

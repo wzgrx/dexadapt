@@ -24,18 +24,30 @@ import io.github.wzgrx.dexadapt.TypeRef
  *  - `callsExact` 先按写明的类找，一个都没有时再认“调用的是它子类上的同名方法”（R8 把引用改到子类上）；
  *  - 依赖成环、引用了后声明的符号（列表里是 null）时给出看得懂的错误，不再栈溢出或空指针。
  */
-class SymbolResolver(
+class SymbolResolver internal constructor(
     private val source: SymbolSource,
     private val versionCode: Long,
-    private val pinFor: (Symbol) -> Pin? = { null },
-    private val skip: (Symbol) -> Boolean = { false },
-    private val log: (String) -> Unit = {},
+    private val pinFor: (Symbol) -> Pin?,
+    private val skip: (Symbol) -> Boolean,
+    private val log: (String) -> Unit,
+    private val build: String?,
 ) {
+    constructor(
+        source: SymbolSource,
+        versionCode: Long,
+        pinFor: (Symbol) -> Pin? = { null },
+        skip: (Symbol) -> Boolean = { false },
+        log: (String) -> Unit = {},
+    ) : this(source, versionCode, pinFor, skip, log, null)
+
     private val done = HashMap<String, Result<Resolved>>()
     /** 正在解析的符号（依赖链），用来发现成环。 */
     private val resolving = LinkedHashSet<String>()
 
-    class Unresolved(message: String) : Exception(message)
+    class Unresolved(message: String, val dependencyId: String? = null, cause: Throwable? = null) : Exception(message, cause)
+
+    private fun blockedBy(id: String, cause: Throwable): Unresolved =
+        Unresolved("depends on $id: ${cause.message}", id, cause)
 
     companion object {
         /** 标了 [io.github.wzgrx.dexadapt.absentIn] 的符号在这个构建里的“解析失败”原因。 */
@@ -89,7 +101,7 @@ class SymbolResolver(
     private fun queryStrings(symbols: List<Symbol>): Set<String> = symbols.flatMapTo(LinkedHashSet()) { s ->
         when (s) {
             is ClassSymbol -> if (s.query.name == null) s.query.strings else emptyList()
-            is MethodSymbol -> if (s.query.owner == null) s.query.shape.strings else emptyList()
+            is MethodSymbol -> if (s.query.owner == null) s.query.shapesFor(build, source.dexSha256).flatMap { it.second.strings } else emptyList()
             is FieldSymbol -> emptyList()
         }
     }
@@ -108,7 +120,7 @@ class SymbolResolver(
                 when (val pin = pinFor(symbol)) {
                     null -> when (symbol) {
                         is ClassSymbol -> Resolved.Class(single(symbol, findClasses(symbol.query)).name)
-                        is MethodSymbol -> single(symbol, preferReal(findMethods(symbol.query))).let { Resolved.Method(it.owner, it.name, it.params, it.returns) }
+                        is MethodSymbol -> resolveMethod(symbol).let { Resolved.Method(it.owner, it.name, it.params, it.returns) }
                         is FieldSymbol -> single(symbol, findFields(symbol.query)).let { Resolved.Field(it.owner, it.name, it.type) }
                     }
                     else -> checkPin(symbol, pin)
@@ -133,6 +145,8 @@ class SymbolResolver(
      */
     fun guess(symbol: Symbol, previous: List<Resolved> = emptyList()): Guess? {
         if (skip(symbol) || pinFor(symbol) != null || resolve(symbol).isSuccess) return null
+        // 不放宽多签名查询：这可能把签名间的冲突误当成可恢复的旧位置。
+        if (symbol is MethodSymbol && symbol.query.variants.isNotEmpty()) return null
         val variants = SymbolMargin.variants(symbol).sortedBy { (label, _) -> if (SymbolMargin.isAnchor(label)) 1 else 0 }
         for ((label, q) in variants) {
             val found: List<Resolved> = runCatching {
@@ -182,8 +196,9 @@ class SymbolResolver(
         when (q) {
             is ClassQuery -> findClasses(q, allowScan = true).size
             is MethodQuery ->
-                if (q.owner == null && q.shape.strings.isEmpty() && q.packagePrefix == null && q.calledBy.isEmpty()) SymbolMargin.UNBOUNDED
-                else preferReal(findMethods(q)).size
+                if (q.owner == null && q.packagePrefix == null && q.calledBy.isEmpty() &&
+                    q.shapesFor(build, source.dexSha256).any { it.second.strings.isEmpty() }) SymbolMargin.UNBOUNDED
+                else methodMatches(q).flatMap { it.second }.distinctBy { it.signature }.size
             is FieldQuery -> findFields(q).size
             else -> SymbolMargin.UNKNOWN
         }
@@ -221,13 +236,17 @@ class SymbolResolver(
             Resolved.Class(c.name)
         }
         is Pin.Method -> {
-            val m = source.classByName(pin.owner)?.methods?.firstOrNull { it.name == pin.name && it.params == pin.params }
-                ?: throw Unresolved("pinned method ${pin.owner}#${pin.name}${pin.params} missing")
-            if (symbol is MethodSymbol) {
+            val candidates = source.classByName(pin.owner)?.methods.orEmpty().filter { it.name == pin.name && it.params == pin.params }
+            if (candidates.isEmpty()) throw Unresolved("pinned method ${pin.owner}#${pin.name}${pin.params} missing")
+            val m = if (symbol is MethodSymbol) {
                 val q = symbol.query
-                val ownerOk = q.owner?.let { typeName(it) == m.owner } ?: (q.packagePrefix == null || m.owner.startsWith(q.packagePrefix + "."))
-                if (!ownerOk || !matches(m, q.shape)) throw Unresolved("pinned method ${m.signature} does not match the query")
-            }
+                val ownerOk = q.owner?.let { typeName(it) == pin.owner } ?: (q.packagePrefix == null || pin.owner.startsWith(q.packagePrefix + "."))
+                val shapes = q.shapesFor(build, source.dexSha256)
+                if (q.variants.isNotEmpty()) shapes.forEach { (_, s) -> checkShapeDependencies(s) }
+                val compatible = if (!ownerOk) emptyList() else candidates.filter { m -> shapes.any { (_, s) -> matches(m, s) } }
+                if (compatible.isEmpty()) throw Unresolved("pinned method ${candidates.first().signature} does not match the query")
+                single(symbol, preferReal(compatible))
+            } else throw Unresolved("method pin requires a method symbol")
             Resolved.Method(m.owner, m.name, m.params, m.returns)
         }
         is Pin.Field -> {
@@ -241,7 +260,7 @@ class SymbolResolver(
     private fun typeName(ref: TypeRef): String = when (ref) {
         TypeRef.Any -> throw Unresolved("TypeRef.Any is only allowed in method parameter lists")
         is TypeRef.Exact -> ref.name
-        is TypeRef.Of -> (resolve(ref.symbol).getOrElse { throw Unresolved("depends on ${ref.symbol.id}: ${it.message}") } as Resolved.Class).name
+        is TypeRef.Of -> (resolve(ref.symbol).getOrElse { throw blockedBy(ref.symbol.id, it) } as Resolved.Class).name
         is TypeRef.SuperOf -> {
             val child = typeName(TypeRef.Of(ref.symbol))
             source.classByName(child)?.superName ?: throw Unresolved("$child has no known superclass")
@@ -249,15 +268,15 @@ class SymbolResolver(
     }
 
     private fun methodSignature(symbol: MethodSymbol): String {
-        val m = resolve(symbol).getOrElse { throw Unresolved("depends on ${symbol.id}: ${it.message}") } as Resolved.Method
+        val m = resolve(symbol).getOrElse { throw blockedBy(symbol.id, it) } as Resolved.Method
         return MethodView.signature(m.owner, m.name, m.params, m.returns)
     }
 
     /** 已解析方法在数据源里的样子（要用它的调用、字段引用）。 */
     private fun methodView(symbol: MethodSymbol): MethodView {
-        val m = resolve(symbol).getOrElse { throw Unresolved("depends on ${symbol.id}: ${it.message}") } as Resolved.Method
+        val m = resolve(symbol).getOrElse { throw blockedBy(symbol.id, it) } as Resolved.Method
         return source.classByName(m.owner)?.methods?.firstOrNull { it.name == m.name && it.params == m.params && it.returns == m.returns }
-            ?: throw Unresolved("depends on ${symbol.id}: ${m.owner}#${m.name} not in the source")
+            ?: throw Unresolved("depends on ${symbol.id}: ${m.owner}#${m.name} not in the source", symbol.id)
     }
 
     /** [pattern] 按顺序出现在 [ops] 里（中间可以有别的）。 */
@@ -275,7 +294,7 @@ class SymbolResolver(
     }
 
     private fun fieldKey(symbol: FieldSymbol): String {
-        val f = resolve(symbol).getOrElse { throw Unresolved("depends on ${symbol.id}: ${it.message}") } as Resolved.Field
+        val f = resolve(symbol).getOrElse { throw blockedBy(symbol.id, it) } as Resolved.Field
         return "${f.owner}#${f.name}"
     }
 
@@ -359,6 +378,31 @@ class SymbolResolver(
         return s.opcodes.isEmpty() || isSubsequence(s.opcodes, m.opcodes)
     }
 
+    private fun checkShapeDependencies(s: MethodShape) {
+        s.params?.filterNot { it == TypeRef.Any }?.forEach(::typeName)
+        s.returns?.let(::typeName)
+    }
+
+    private fun methodMatches(q: MethodQuery): List<Pair<String, List<MethodView>>> =
+        q.shapesFor(build, source.dexSha256).map { (label, shape) ->
+            if (q.variants.isNotEmpty()) checkShapeDependencies(shape)
+            label to preferReal(findMethods(q.copy(shape = shape, variants = emptyList())))
+        }
+
+    private fun resolveMethod(symbol: MethodSymbol): MethodView {
+        val q = symbol.query
+        if (q.variants.isEmpty()) return single(symbol, preferReal(findMethods(q)))
+        val branches = methodMatches(q)
+        val found = branches.flatMap { it.second }.distinctBy { it.signature }.sortedBy { it.signature }
+        if (found.size == 1) return found.single()
+        val summary = branches.joinToString("; ") { (label, methods) ->
+            "$label=${methods.size}" + methods.map { it.signature }.sorted().take(4)
+                .joinToString(prefix = "[", postfix = "]")
+        }
+        val reason = if (found.isEmpty()) "no match" else "${found.size} matches"
+        throw Unresolved("$reason across method shapes: $summary")
+    }
+
     private fun findMethods(q: MethodQuery): List<MethodView> {
         val owner = q.owner
         val prefix = q.packagePrefix
@@ -431,7 +475,7 @@ class SymbolResolver(
  */
 fun SymbolResolver.Companion.forBuild(source: SymbolSource, versionCode: Long, build: String?, log: (String) -> Unit = {}): SymbolResolver =
     if (build == null) SymbolResolver(source, versionCode, log = log)
-    else SymbolResolver(source, versionCode, pinFor = { it.pins[build] }, skip = { build in it.absentIn }, log = log)
+    else SymbolResolver(source, versionCode, pinFor = { it.pins[build] }, skip = { build in it.absentIn }, log = log, build = build)
 
 /** 每条查询的余量（逐个去掉一个条件后的候选数）；钉死、跳过、没解析出来、按类名找的不算。 */
 fun SymbolResolver.margins(symbols: List<io.github.wzgrx.dexadapt.Symbol>): List<SymbolMargin> = symbols.mapNotNull(::margin)
