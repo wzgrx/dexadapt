@@ -215,12 +215,21 @@ private fun runMatrix(opts: Opts): MatrixRun {
         val variantKey = IncrementalMargins.key("", build.packageName, build.id, identity)
         val key = IncrementalMargins.key(engineIdentity, build.packageName, build.id, identity)
         val previous = if (opts.flag("incremental")) IncrementalMargins.read(cache, key) else null
-        val cached = previous?.takeIf { it.spec == specIdentity }?.let {
+        val previousTable = previous?.let {
             runCatching { SymbolTable.fromJson(it.table) }.getOrNull()?.takeIf { t ->
                 t.dexSha256 == identity && t.versionCode == build.versionCode && t.packageName == build.packageName &&
-                    t.missing.isEmpty() && it.rows.mapValues { (_, row) -> row.fingerprint } == fingerprints
+                    t.missing.isEmpty() && !t.partial && (t.entries.keys + t.absent) == it.fingerprints.keys
             }
         }
+        val absent = spec.catalog.symbols.filter { build.id in it.absentIn }.mapTo(HashSet()) { it.id }
+        val cached = previousTable?.takeIf {
+            previous.spec == specIdentity && previous.fingerprints == fingerprints &&
+                previous.rows.mapValues { (_, row) -> row.fingerprint } == fingerprints && it.absent.toSet() == absent
+        }
+        val verified = if (previousTable != null) {
+            IncrementalMargins.verifiedEntries(previousTable, previous.fingerprints, fingerprints, absent)
+        } else emptyMap()
+        val previousMargins = if (previousTable != null) previous.rows else emptyMap()
         var indexMs = 0L
         var resolveMs = 0L
         var marginMs = 0L
@@ -236,23 +245,23 @@ private fun runMatrix(opts: Opts): MatrixRun {
             indexMs = (indexed - identified) / 1_000_000
             require(o.codeIdentity == identity) { "索引的完整 DEX 身份不一致" }
             val resolver = SymbolResolver.forBuild(o.source, o.info.versionCode, build.id)
-            val t = resolver.table(spec.catalog.symbols, onProgress = { done, total ->
+            val t = resolver.tableWithVerifiedEntries(spec.catalog.symbols, verified, onProgress = { done, total ->
                 if (done % 100 == 0 || done == total) println("  ${build.id} 解析 $done/$total")
             }).copy(packageName = build.packageName)
             val resolved = System.nanoTime()
             resolveMs = (resolved - indexed) / 1_000_000
             println("  ${build.id} 计算查询余量")
-            val rows = IncrementalMargins.collect(spec.catalog.symbols, fingerprints, t, previous?.rows.orEmpty(), resolver::margin)
+            val rows = IncrementalMargins.collect(spec.catalog.symbols, fingerprints, t, previousMargins, resolver::margin)
             marginMs = (System.nanoTime() - resolved) / 1_000_000
             t to rows
         }
         if (cached == null && table.missing.isEmpty()) {
-            IncrementalMargins.write(cache, key, IncrementalMargins.Snapshot(specIdentity, table.toJson(), result.rows))
+            IncrementalMargins.write(cache, key, IncrementalMargins.Snapshot(specIdentity, table.toJson(), result.rows, fingerprints))
         }
         margins[build] = result.margins
         val mode = when {
             cached != null -> "reused"
-            result.reused > 0 -> "partial"
+            verified.isNotEmpty() || result.reused > 0 -> "partial"
             else -> "fresh"
         }
         val tableKey = MatrixCache.hash("$specIdentity|$key")
@@ -264,10 +273,11 @@ private fun runMatrix(opts: Opts): MatrixRun {
             "tablePath" to j("tables/$tableKey.json"), "cacheKey" to j(key),
             "indexOpened" to kotlinx.serialization.json.JsonPrimitive(openedIndex),
             "identityMs" to j((identified - started) / 1_000_000), "indexMs" to j(indexMs),
+            "resolveReused" to j(verified.size), "resolveComputed" to j(fingerprints.size - absent.size - verified.size),
             "resolveMs" to j(resolveMs), "marginMs" to j(marginMs), "marginReused" to j(result.reused),
             "marginComputed" to j(result.computed), "elapsedMs" to j((System.nanoTime() - started) / 1_000_000),
         ))
-        println("${build.label}（${build.id}）：${table.entries.size} 个找到，${table.missing.size} 个缺失，$mode；余量重算 ${result.computed}，复用 ${result.reused}")
+        println("${build.label}（${build.id}）：${table.entries.size} 个找到，${table.missing.size} 个缺失，$mode；解析复用 ${verified.size}；余量重算 ${result.computed}，复用 ${result.reused}")
         tables[build]=table
         if(table.missing.isNotEmpty())failed=true
         val row = manifest.last()

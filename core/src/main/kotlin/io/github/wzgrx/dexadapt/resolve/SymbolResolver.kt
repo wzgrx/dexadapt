@@ -57,10 +57,34 @@ class SymbolResolver internal constructor(
         private const val SLOW_MS = 1500L
     }
 
-    fun table(symbols: List<Symbol>, onProgress: (done: Int, total: Int) -> Unit = { _, _ -> }): SymbolTable {
+    fun table(symbols: List<Symbol>, onProgress: (done: Int, total: Int) -> Unit = { _, _ -> }): SymbolTable =
+        tableWithVerifiedEntries(symbols, emptyMap(), onProgress)
+
+    /**
+     * 桌面增量解析。调用方必须保证复用项来自相同的代码、构建、解析器和完整递归查询指纹，
+     * 只传成功解析的项。使用一个全新的解析器；失败与缺省仍按当前目录处理。
+     */
+    fun tableWithVerifiedEntries(
+        symbols: List<Symbol>,
+        verifiedEntries: Map<String, Resolved>,
+        onProgress: (done: Int, total: Int) -> Unit = { _, _ -> },
+    ): SymbolTable {
+        if (verifiedEntries.isNotEmpty()) {
+            check(done.isEmpty() && resolving.isEmpty()) { "incremental resolution needs a fresh resolver" }
+            val byId = symbols.associateBy { it.id }
+            for ((id, value) in verifiedEntries) {
+                val symbol = byId[id]
+                require(symbol != null && !skip(symbol) && when (symbol) {
+                    is ClassSymbol -> value is Resolved.Class
+                    is FieldSymbol -> value is Resolved.Field
+                    is MethodSymbol -> value is Resolved.Method
+                }) { "invalid verified entry: $id" }
+            }
+            verifiedEntries.forEach { (id, value) -> done[id] = Result.success(value) }
+        }
         val entries = sortedMapOf<String, Resolved>()
         val missing = sortedMapOf<String, String>()
-        source.prefetchStrings(queryStrings(symbols.filterNot(skip)))
+        source.prefetchStrings(queryStrings(symbols.filter { !skip(it) && it.id !in verifiedEntries }))
         val absent = symbols.filter(skip).map { it.id }.distinct().sorted()
         symbols.forEachIndexed { i, s ->
             val started = System.nanoTime()

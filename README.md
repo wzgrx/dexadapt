@@ -1,9 +1,9 @@
 # DexAdapt
 
-当前版本：[0.6.0](https://github.com/wzgrx/dexadapt/releases/tag/v0.6.0)。
+当前版本：[0.7.0](https://github.com/wzgrx/dexadapt/releases/tag/v0.7.0)。
 
-- 多签名 Kotlin 访问器按当前宿主实际成员校验接收者、参数个数和类型。旧的单签名接口保持原样。
-- 矩阵支持按符号与递归依赖复用余量；整表命中时只核对安装包身份，不打开 Dexlib 索引。
+- `.apks` / `.xapk` 解包缓存按实际 APK 内容定位；同名同大小换包不会读取旧拆包，损坏或缺失的成员会重新提取。
+- 矩阵按符号和递归依赖增量解析及计算余量；整表命中时不打开 Dexlib 索引。
 - 发布使用哔哩净界与红薯净界的真实 APK 验证。详见 [更新日志](CHANGELOG.md)。
 
 给 LSPosed / Xposed 模块用的**通用版本适配工具链和运行时库**。宿主 App 一升级，混淆名全变，模块就得重新适配。
@@ -169,7 +169,7 @@ linker.clazz(MySymbols.feed).resolve().firstField { name = "poi" }            //
 索引缓存使用真实DEX内容摘要和载荷校验，默认最多64条/4GiB；`DEXADAPT_CACHE_MAX_ENTRIES`、`DEXADAPT_CACHE_MAX_BYTES`（正整数）可调整，`DEXADAPT_CACHE=off`仍可禁用。缓存格式升级后旧记录不会误用。
 
 - `probe --spec hooks.yaml --apk old.apk --baseline previous.yaml --id player.menu --json`：只解析指定符号及其下游，不做余量扫描。对同一个包比较旧、新 spec，报告目标变化、缺失、依赖链、DEX 摘要和耗时；有缺失、退化或目标变化时返回 3。CLI 和 MCP 均可用。脚本使用 DexKit 时请加 `--out report.json`，原生库可能往终端输出日志。
-- `matrix --incremental`：以包名、构建、完整 DEX 摘要和引擎隔离缓存。目录未变时直接复用表与余量，无需打开 Dexlib 索引；改目录后重新解析表，只重算定义或递归依赖变动的符号余量。默认仍全量计算。manifest.json 记录 `fresh/partial/reused`、是否打开索引、分段耗时及复用数；`--parity` 始终用 DexKit 重新验证。若使用方有意只要求已知构建一致，可以显式加 `--parity-known-only`，未知构建需另测。
+- `matrix --incremental`：以包名、构建、完整 DEX 摘要和引擎隔离缓存。目录未变时直接复用表与余量，无需打开 Dexlib 索引；改目录后只解析定义或递归依赖变动的符号，并只重算失效的余量。默认仍全量计算。manifest.json 记录 `fresh/partial/reused`、是否打开索引、分段耗时、解析及余量的重算数和复用数；`--parity` 始终用 DexKit 重新验证。若使用方有意只要求已知构建一致，可以显式加 `--parity-known-only`，未知构建需另测。
 - `repair --apk <额外样本> --channel <路径>=cn --out <目录> --json`：使用真实old/new-build，保留pins/absentIn/contract；候选依赖重新绑定，额外样本逐个验证原目标不变，输出repair.json和candidate-spec.json。
 - `upgrade --verify-repairs --parity [--incremental]`：对独立候选重新跑全版本矩阵，原spec不覆盖。Kotlin目录作为源的使用方仍需把经审查的查询写回Kotlin，而不是只改生成YAML。上述选项亦由MCP暴露。
 - 完整代码split可做桌面diff；桌面多代码表使用复合身份，base-only消费者会安全拒绝不匹配表，需要消费者支持完整代码身份后才可部署。单代码APK的身份与匹配语义不变。

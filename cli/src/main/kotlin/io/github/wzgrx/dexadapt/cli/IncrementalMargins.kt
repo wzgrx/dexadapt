@@ -1,6 +1,7 @@
 package io.github.wzgrx.dexadapt.cli
 
 import io.github.wzgrx.dexadapt.Symbol
+import io.github.wzgrx.dexadapt.Resolved
 import io.github.wzgrx.dexadapt.SymbolTable
 import io.github.wzgrx.dexadapt.resolve.SymbolGraph
 import io.github.wzgrx.dexadapt.resolve.SymbolMargin
@@ -18,11 +19,25 @@ import java.nio.file.StandardCopyOption
 /** 每个包、构建、DEX 身份和引擎一个记录；每行按自己的查询及递归依赖匹配。 */
 internal object IncrementalMargins {
     private val json = Json { encodeDefaults = true }
-    private const val FORMAT = "margin-rows-v1"
+    private const val FORMAT = "symbol-rows-v2"
     private const val MAX_BYTES = 32L * 1024 * 1024
 
     @Serializable data class Row(val fingerprint: String, val margin: MatrixCache.Margin?)
-    @Serializable data class Snapshot(val spec: String, val table: String, val rows: Map<String, Row>)
+    @Serializable data class Snapshot(
+        val spec: String,
+        val table: String,
+        val rows: Map<String, Row>,
+        val fingerprints: Map<String, String>,
+    )
+
+    fun verifiedEntries(
+        table: SymbolTable,
+        previous: Map<String, String>,
+        current: Map<String, String>,
+        absent: Set<String>,
+    ): Map<String, Resolved> = table.entries.filterKeys {
+        it !in absent && current[it]?.let { fingerprint -> previous[it] == fingerprint } == true
+    }
     @Serializable private data class Record(val key: String, val snapshot: Snapshot, val checksum: String)
 
     data class Result(val rows: Map<String, Row>, val margins: List<SymbolMargin>, val reused: Int, val computed: Int)

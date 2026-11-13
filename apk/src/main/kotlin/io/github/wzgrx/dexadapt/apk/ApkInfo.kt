@@ -4,7 +4,14 @@ import com.android.apksig.ApkVerifier
 import io.github.wzgrx.dexadapt.Hex
 import kotlinx.serialization.Serializable
 import java.io.File
+import java.io.OutputStream
+import java.io.InputStream
+import java.nio.file.Files
+import java.nio.file.LinkOption.NOFOLLOW_LINKS
+import java.nio.file.StandardCopyOption
 import java.security.MessageDigest
+import java.util.Locale
+import java.util.zip.ZipEntry
 import java.util.zip.ZipFile
 
 /** 一个安装包（base.apk 加拆分包）的档案：版本、签名、清单、代码和原生库。纯数据，可以序列化进报告。 */
@@ -195,16 +202,65 @@ class ApkSet private constructor(val source: File, val files: List<File>) {
                 require(apks.isNotEmpty()) { "$path 里没有 apk" }
                 return ApkSet(path, order(apks))
             }
-            val inner = ZipFile(path).use { z -> z.entries().asSequence().filter { !it.isDirectory && it.name.endsWith(".apk") && '/' !in it.name }.map { it.name }.toList() }
-            val hasManifest = ZipFile(path).use { it.getEntry("AndroidManifest.xml") != null }
-            if (hasManifest || inner.isEmpty()) return ApkSet(path, listOf(path))
-            // .apks / .xapk：解到以内容摘要命名的目录，重复打开不再解。
-            val dir = File(workDir, path.nameWithoutExtension.replace(Regex("[^A-Za-z0-9._-]"), "_") + "-" + path.length())
-            if (!dir.isDirectory || inner.any { !File(dir, it).isFile }) {
-                dir.mkdirs()
-                ZipFile(path).use { z -> inner.forEach { n -> z.getInputStream(z.getEntry(n)).use { input -> File(dir, n).outputStream().use(input::copyTo) } } }
+            return ZipFile(path).use { zip ->
+                val entries = zip.entries().asSequence().filter {
+                    !it.isDirectory && it.name.endsWith(".apk") && '/' !in it.name
+                }.toList()
+                if (zip.getEntry("AndroidManifest.xml") != null || entries.isEmpty()) {
+                    ApkSet(path, listOf(path))
+                } else {
+                    ApkSet(path, order(extract(zip, entries, workDir)))
+                }
             }
-            return ApkSet(path, order(inner.map { File(dir, it) }))
+        }
+
+        private data class Member(val entry: ZipEntry, val digest: String)
+
+        private fun extract(zip: ZipFile, entries: List<ZipEntry>, workDir: File): List<File> {
+            require(entries.all { e -> e.name.none { it.code in 0..31 || it.code in listOf(34, 42, 58, 60, 62, 63, 92, 124) } }) { "拆包 APK 文件名无效" }
+            require(entries.map { it.name.lowercase(Locale.ROOT) }.distinct().size == entries.size) { "拆包包含重名 APK" }
+            // 直接从同一个打开的 ZipFile 计算内容身份；外层文件换名、同名同大小都不影响判断。
+            val members = entries.map { e -> Member(e, zip.getInputStream(e).use { digest(it) }) }
+            val identity = MessageDigest.getInstance("SHA-256")
+            for (m in members) {
+                identity.update(m.entry.name.toByteArray(Charsets.UTF_8))
+                identity.update(0.toByte())
+                identity.update(m.digest.toByteArray(Charsets.UTF_8))
+                identity.update(0.toByte())
+            }
+            val dir = workDir.toPath().resolve("splits-v2-" + Hex.of(identity.digest()))
+            Files.createDirectories(dir)
+            require(Files.isDirectory(dir, NOFOLLOW_LINKS)) { "拆包缓存目录无效" }
+            return members.map { m ->
+                val target = dir.resolve(m.entry.name)
+                val valid = Files.isRegularFile(target, NOFOLLOW_LINKS) && Files.size(target) == m.entry.size &&
+                    Files.newInputStream(target).use { digest(it) } == m.digest
+                if (!valid) {
+                    val temp = Files.createTempFile(dir, "extract-", ".tmp")
+                    try {
+                        val actual = zip.getInputStream(m.entry).use { input ->
+                            Files.newOutputStream(temp).use { output -> digest(input, output) }
+                        }
+                        require(actual == m.digest && Files.size(temp) == m.entry.size) { "拆包内容校验失败：${m.entry.name}" }
+                        Files.move(temp, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
+                    } finally {
+                        Files.deleteIfExists(temp)
+                    }
+                }
+                target.toFile()
+            }
+        }
+
+        private fun digest(input: InputStream, output: OutputStream? = null): String {
+            val sha = MessageDigest.getInstance("SHA-256")
+            val buffer = ByteArray(64 * 1024)
+            while (true) {
+                val size = input.read(buffer)
+                if (size < 0) break
+                sha.update(buffer, 0, size)
+                output?.write(buffer, 0, size)
+            }
+            return Hex.of(sha.digest())
         }
 
         /** base 在前：名字叫 base.apk 的，或者带代码（classes.dex）的那个；其余按名字排。 */

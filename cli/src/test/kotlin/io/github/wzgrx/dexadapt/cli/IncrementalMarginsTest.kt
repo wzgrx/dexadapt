@@ -1,5 +1,6 @@
 package io.github.wzgrx.dexadapt.cli
 
+import io.github.wzgrx.dexadapt.Resolved
 import io.github.wzgrx.dexadapt.SymbolTable
 import io.github.wzgrx.dexadapt.resolve.SymbolMargin
 import io.github.wzgrx.dexadapt.spec.Spec
@@ -33,7 +34,14 @@ class IncrementalMarginsTest {
         val old = IncrementalMargins.fingerprints(before)
         val new = IncrementalMargins.fingerprints(after)
         assertEquals(setOf("t.anchor", "t.outer", "t.variant"), old.keys.filter { old[it] != new[it] }.toSet())
-        val table = SymbolTable(2, "dex", emptyMap())
+        val table = SymbolTable(2, "dex", mapOf(
+            "t.anchor" to Resolved.Class("host.Anchor"),
+            "t.outer" to Resolved.Class("host.Outer"),
+            "t.variant" to Resolved.Method("host.Outer", "a", listOf("host.Anchor"), "void"),
+            "t.unrelated" to Resolved.Class("host.Unrelated"),
+        ))
+        assertEquals(setOf("t.unrelated"), IncrementalMargins.verifiedEntries(table, old, new, emptySet()).keys)
+        assertTrue(IncrementalMargins.verifiedEntries(table, old, new, setOf("t.unrelated")).isEmpty())
         val collect = IncrementalMargins.collect(before.catalog.symbols, old, table, emptyMap()) { null }
         val touched = mutableListOf<String>()
         val changed = IncrementalMargins.collect(after.catalog.symbols, new, table, collect.rows) { symbol ->
@@ -58,7 +66,7 @@ class IncrementalMarginsTest {
         val dir = kotlin.io.path.createTempDirectory("margins").toFile()
         try {
             val key = IncrementalMargins.key("engine", "app", "CN_2", "dex")
-            val snapshot = IncrementalMargins.Snapshot("spec", table.toJson(), results.rows)
+            val snapshot = IncrementalMargins.Snapshot("spec", table.toJson(), results.rows, fingerprints)
             IncrementalMargins.write(dir, key, snapshot)
             assertEquals(snapshot, IncrementalMargins.read(dir, key))
             assertNull(IncrementalMargins.read(dir, IncrementalMargins.key("engine", "app", "CN_2", "other")))
