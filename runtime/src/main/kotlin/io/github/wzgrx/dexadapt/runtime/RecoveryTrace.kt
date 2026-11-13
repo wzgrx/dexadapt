@@ -12,9 +12,9 @@ class RecoveryTrace(
     private val marks = linkedMapOf(Step.REQUESTED to 0L)
 
     @Synchronized fun mark(step: Step): Long = marks.getOrPut(step) { (clock() - started).coerceAtLeast(0L) }
-    /** 使用同一设备单调时钟；夹紧异常时间，仍保留宿主最初观察到的时间。 */
+    /** 使用同一设备单调时钟。跨进程补报可早于本次交付，保留相对交付的负偏移。 */
     @Synchronized fun observe(step: Step, at: Long): Sample = Sample(step, marks.getOrPut(step) {
-        (at.coerceIn(started, clock().coerceAtLeast(started)) - started).coerceAtLeast(0L)
+        at.coerceIn(0L, clock().coerceAtLeast(0L)) - started
     })
     @Synchronized fun snapshot(): List<Sample> = marks.map { (step, time) -> Sample(step, time) }
 }

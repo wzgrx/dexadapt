@@ -25,7 +25,10 @@ class InstalledDexIdentityCache(
 
     private val slots = ConcurrentHashMap<String, Slot>()
 
-    fun current(packageName: String): HostCodeIdentity? {
+    fun current(packageName: String): HostCodeIdentity? = current(packageName) {}
+
+    /** 每次实际开始完整 DEX 摘要读取仅回调一次；缓存命中不回调。 */
+    fun current(packageName: String, onRead: () -> Unit): HostCodeIdentity? {
         val slot = slots.computeIfAbsent(packageName) { Slot() }
         return synchronized(slot) {
             val generation = slot.generation.get()
@@ -41,6 +44,7 @@ class InstalledDexIdentityCache(
             }
             slot.entry = null
             val identity = try {
+                onRead()
                 HostCodeIdentity(packageName, before.installation.versionCode, digest(before.installation.files))
             } catch (_: IOException) {
                 return@synchronized null
