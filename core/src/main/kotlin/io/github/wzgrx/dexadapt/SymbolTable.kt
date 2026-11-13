@@ -48,6 +48,8 @@ data class SymbolTable(
     val partial: Boolean = false,
     /** 新表标记宿主包名；空值仅用于兼容旧的内置表。 */
     val packageName: String = "",
+    /** 仅用于本次宿主交付的随机代际编号；空表示常规内置或历史表。 */
+    val recoveryToken: String = "",
 ) {
     /** 推测的位置和推测方法。 */
     @Serializable

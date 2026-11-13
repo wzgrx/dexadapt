@@ -40,6 +40,19 @@ class DexKitScan private constructor(private val bridges: ArrayList<DexKitBridge
             return DexKitScan(Input(code, actual), warn)
         }
 
+        /** 安装快照提供完整摘要；打开前后均重查，避免将旧桥标记为新安装。 */
+        fun installed(apks: List<File>, expectedDexSha256: String, currentDigest: () -> String?): DexKitScan {
+            require(currentDigest() == expectedDexSha256) { "打开 DexKit 前安装身份已变化" }
+            val scan = DexKitScan(Input(apks.filter(DexDigest::hasCode), expectedDexSha256), { _, _ -> })
+            try {
+                require(currentDigest() == expectedDexSha256) { "打开 DexKit 时安装身份已变化" }
+                return scan
+            } catch (e: Throwable) {
+                scan.close()
+                throw e
+            }
+        }
+
         private fun open(apks: List<File>): ArrayList<DexKitBridge> {
             require(apks.isNotEmpty()) { "no apk" }
             val out = ArrayList<DexKitBridge>()

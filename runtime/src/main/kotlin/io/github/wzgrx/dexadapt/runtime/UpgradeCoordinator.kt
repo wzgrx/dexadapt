@@ -42,12 +42,13 @@ class UpgradeCoordinator(
         val firstRestoreNanos: Long?,
         val elapsedNanos: Long,
         val error: String? = null,
+        val timing: List<RecoveryTrace.Sample> = emptyList(),
     )
 
     fun interface Checkpoint { fun check() }
 
     private class Cancelled : RuntimeException()
-    private class Work(val request: Request, val started: Long) {
+    private class Work(val request: Request, val started: Long, val trace: RecoveryTrace) {
         var cancelled = false
         var firstRestore: Long? = null
         val acknowledged = HashSet<String>()
@@ -65,6 +66,7 @@ class UpgradeCoordinator(
     /** 事件入口：由模块后台线程调用；以当前安装身份为准，不使用广播携带的版本号。 */
     fun onEvent(packageName: String, catalog: String, enabled: Set<Feature>, trigger: Trigger): Boolean {
         val started = nanoTime()
+        val trace = RecoveryTrace(nanoTime, started)
         val event = synchronized(lock) { (++nextEvent).also { latestEvent[packageName] = it } }
         val identity = currentIdentity(packageName)
         require(identity == null || identity.packageName == packageName)
@@ -76,7 +78,8 @@ class UpgradeCoordinator(
                 pending.remove(packageName)
                 return false
             }
-            enqueueLocked(Request(identity, catalog, enabled, trigger), started)
+            trace.mark(RecoveryTrace.Step.IDENTITY_VERIFIED)
+            enqueueLocked(Request(identity, catalog, enabled, trigger), started, trace)
         }
         return dispatch(enqueue)
     }
@@ -84,12 +87,13 @@ class UpgradeCoordinator(
     /** 返回 false 表示已有等价任务；扫描在 executor 上运行。 */
     fun submit(request: Request): Boolean = dispatch(synchronized(lock) {
         latestEvent.remove(request.identity.packageName)
-        enqueueLocked(request, nanoTime())
+        val started = nanoTime()
+        enqueueLocked(request, started, RecoveryTrace(nanoTime, started))
     })
 
     private enum class Enqueue { DUPLICATE, QUEUED, SCHEDULE }
 
-    private fun enqueueLocked(request: Request, started: Long): Enqueue {
+    private fun enqueueLocked(request: Request, started: Long, trace: RecoveryTrace): Enqueue {
         // 防止调用方在任务排队期间修改可变集合。
         val snapshot = request.copy(enabled = request.enabled.mapTo(LinkedHashSet()) { it.copy(symbols = it.symbols.toSet()) })
         val pkg = snapshot.identity.packageName
@@ -103,7 +107,7 @@ class UpgradeCoordinator(
             return Enqueue.DUPLICATE
         }
         running?.cancelled = true
-        pending[pkg] = Work(snapshot, started)
+        pending[pkg] = Work(snapshot, started, trace)
         if (scheduled) return Enqueue.QUEUED
         scheduled = true
         return Enqueue.SCHEDULE
@@ -132,6 +136,7 @@ class UpgradeCoordinator(
                 }
                 first.value.also { pending.remove(first.key); active = it }
             }
+            work.trace.mark(RecoveryTrace.Step.WORK_STARTED)
             val report = execute(work)
             synchronized(lock) { if (active === work) active = null }
             // 诊断回调不应让后续扫描停住。
@@ -146,7 +151,7 @@ class UpgradeCoordinator(
     private fun execute(work: Work): Report {
         val request = work.request
         fun report(outcome: Outcome, error: String? = null) =
-            Report(request, outcome, work.firstRestore, nanoTime() - work.started, error)
+            Report(request, outcome, work.firstRestore, nanoTime() - work.started, error, work.trace.snapshot())
 
         // 昂贵的身份检查不占队列锁；核对后再锁住提交，禁止新事件插到验收和提交之间。
         fun current() {
@@ -158,29 +163,34 @@ class UpgradeCoordinator(
                 "扫描表身份或阶段无效"
             }
             require(table.entries.keys.none { it in table.absent || it in table.missing }) { "扫描表状态冲突" }
+            work.trace.mark(if (complete) RecoveryTrace.Step.TABLE_READY else RecoveryTrace.Step.PRIORITY_READY)
             current()
             synchronized(lock) {
-                if (work.cancelled) throw Cancelled()
+                if (work.cancelled || Thread.currentThread().isInterrupted) throw Cancelled()
                 val ready = request.enabled.filter { feature -> feature.symbols.all(table.entries::containsKey) }
                 val restart = if (complete) ready.filter { it.startupOnly }.mapTo(sortedSetOf()) { it.id } else emptySet()
                 val hot = ready.filterNot { it.startupOnly }.mapTo(sortedSetOf()) { it.id } - work.acknowledged
                 if (complete || hot.isNotEmpty()) {
                     val acknowledged = install(Publication(request, table, hot, restart, observation))
+                    work.trace.mark(RecoveryTrace.Step.TABLE_DELIVERED)
                     require(hot.containsAll(acknowledged)) { "消费方确认了未提交的功能" }
                     work.acknowledged += acknowledged
-                    if (acknowledged.isNotEmpty() && work.firstRestore == null) work.firstRestore = nanoTime() - work.started
+                    if (acknowledged.isNotEmpty() && work.firstRestore == null) work.firstRestore = work.trace.mark(RecoveryTrace.Step.HOST_BOUND)
                 }
                 if (save) {
                     // install 可能同步投递下一次升级；这时不再提交上一轮表。
                     if (work.cancelled) throw Cancelled()
+                    // Re-check under the same generation lock; an installation-aware identity source
+                    // may serve the already verified digest for this unchanged snapshot.
                     if (currentIdentity(request.identity.packageName) != request.identity) throw Cancelled()
-                    if (work.cancelled) throw Cancelled()
+                    if (work.cancelled || Thread.currentThread().isInterrupted) throw Cancelled()
                     tables.save(request.identity, table)
                 }
             }
         }
         return try {
             current()
+            work.trace.mark(RecoveryTrace.Step.IDENTITY_VERIFIED)
             val choice = AdaptPolicy.chooseVerified(request.identity, tables.local(request.identity, request.catalog),
                 tables.bundled(request.identity), request.catalog)
             val existing = choice.table
@@ -189,6 +199,7 @@ class UpgradeCoordinator(
                 deliver(existing.copy(catalog = request.catalog), complete = true, save = false, observation = choice.observe)
                 report(Outcome.REUSED)
             } else {
+                work.trace.mark(RecoveryTrace.Step.SCAN_STARTED)
                 val full = scan(request, Checkpoint {
                     synchronized(lock) { if (work.cancelled) throw Cancelled() }
                     if (Thread.currentThread().isInterrupted) throw InterruptedException("扫描中断")
