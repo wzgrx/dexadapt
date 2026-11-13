@@ -1,6 +1,8 @@
 # DexAdapt
 
-当前版本：[0.9.0](https://github.com/wzgrx/dexadapt/releases/tag/v0.9.0)。
+当前版本：[0.11.0](https://github.com/wzgrx/dexadapt/releases/tag/v0.11.0)。
+
+已验证完整表可通过宿主桥接直达，缺表才进入后台扫描。
 
 - 恢复回执区分宿主绑定和首次实际效果，重复确认不重复触发重试；安装摘要按宿主缓存，换包时失效。
 - `UpgradeCoordinator` 统一宿主首次打开、升级、模块启动、定时检查与重试；重复事件合并，过时结果不发布。

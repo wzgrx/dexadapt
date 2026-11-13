@@ -33,3 +33,11 @@ Android 可能延后后台任务；模块没有运行或收不到广播时，由
 再用当前安装身份和目录调用 `confirm`。只有 `Advanced` 记录新事件或调度失败重试；`Duplicate` 表示已接受的确认，
 不重复触发副作用；`Rejected` 不推进状态。使用 `DirectoryAdaptationStore` 保存完整表时令牌会剥离，
 读取旧缓存也不会返回旧令牌；模块重启后复用表时重新发布即可。
+
+
+### 前台快路径（0.11.0）
+
+已鉴权的宿主请求调用 `ForegroundRecovery.select`：`Available` 返回同包、同版本、完整 DEX 和目录匹配的表；
+`NeedsScan` 交给唯一持久任务，`Unavailable` 仅做有界重试。返回的表仍由宿主在绑定前完整校验。
+宿主把首次启动的单调时钟起点带到桥接；模块重启后，报告允许观察时间早于本次交付。
+`InstalledDexIdentityCache.current(packageName, onRead)` 在实际开始一次完整 DEX 摘要时回调，命中不计数。
