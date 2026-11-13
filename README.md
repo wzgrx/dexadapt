@@ -1,7 +1,8 @@
 # DexAdapt
 
-当前版本：[0.8.0](https://github.com/wzgrx/dexadapt/releases/tag/v0.8.0)。
+当前版本：[0.9.0](https://github.com/wzgrx/dexadapt/releases/tag/v0.9.0)。
 
+- 恢复回执区分宿主绑定和首次实际效果，重复确认不重复触发重试；安装摘要按宿主缓存，换包时失效。
 - `UpgradeCoordinator` 统一宿主首次打开、升级、模块启动、定时检查与重试；重复事件合并，过时结果不发布。
 - 运行时按包名、版本码与完整 DEX 选表，先解析已开启且可热安装的功能；降级可复用完全匹配的完整表。
 - `.apks` / `.xapk` 解包缓存按实际 APK 内容定位；同名同大小换包不会读取旧拆包，损坏或缺失的成员会重新提取。
@@ -122,7 +123,7 @@ tool_timeout_sec = 900
 4. 模块 App 里用 `AdaptPolicy.decide` 判断要不要扫、`DexKitScan` + `SymbolResolver` 本机适配、`AdaptPolicy.stamp` 盖身份，
    再把表交给宿主进程热替换。
 
-0.8.0 的升级流程接入见 [运行时升级指南](docs/UPGRADE_RUNTIME.md)；旧选表 API 保持兼容，新接入必须使用严格身份入口。
+宿主升级、安装摘要与恢复回执接入见 [运行时升级指南](docs/UPGRADE_RUNTIME.md)；旧选表 API 保持兼容，新接入必须使用严格身份入口。
 
 已经用了某个 Hook 框架的模块不用改写法，用 `hooks` 模块的适配（成员按符号表找、找不到不挂、观察模式自动接上）：
 
