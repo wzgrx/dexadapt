@@ -32,6 +32,14 @@ class DexKitScan private constructor(private val bridges: ArrayList<DexKitBridge
     }
 
     companion object {
+        /** 运行时严格适配入口：按实际文件验证完整 DEX，不接受未经核验的调用方摘要。 */
+        fun verified(apks: List<File>, expectedDexSha256: String, warn: (String, Throwable) -> Unit = { _, _ -> }): DexKitScan {
+            val code = apks.filter(DexDigest::hasCode)
+            val actual = DexDigest.of(code)
+            require(actual == expectedDexSha256) { "DexKit 打开的 APK 与预期 DEX 身份不符" }
+            return DexKitScan(Input(code, actual), warn)
+        }
+
         private fun open(apks: List<File>): ArrayList<DexKitBridge> {
             require(apks.isNotEmpty()) { "no apk" }
             val out = ArrayList<DexKitBridge>()

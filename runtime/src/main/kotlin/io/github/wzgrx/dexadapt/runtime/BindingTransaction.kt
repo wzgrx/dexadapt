@@ -26,6 +26,21 @@ object BindingTransaction {
         }
     }
 
+    /** 在活动宿主消费阶段表前验证实际代码；跨安装的旧表必须重新绑定到新进程。 */
+    fun applyVerified(
+        identity: HostCodeIdentity,
+        catalog: String,
+        old: SymbolTable?,
+        next: SymbolTable,
+        nodes: List<Node>,
+        replace: (SymbolTable?) -> Unit,
+        pause: (Boolean) -> Unit,
+    ): Result {
+        require(identity.matches(next) && next.catalog == catalog) { "热替换的 DEX 或目录身份不匹配" }
+        require(old == null || identity.matches(old)) { "旧表不属于正在运行的宿主" }
+        return apply(old, next, nodes, replace, pause)
+    }
+
     fun apply(old: SymbolTable?, next: SymbolTable, nodes: List<Node>, replace: (SymbolTable?) -> Unit, pause: (Boolean) -> Unit): Result {
         require(old == null || old.versionCode == next.versionCode) { "热替换不能跨宿主版本" }
         require(old == null || old.packageName.isEmpty() || next.packageName.isEmpty() || old.packageName == next.packageName) { "热替换不能跨宿主包名" }

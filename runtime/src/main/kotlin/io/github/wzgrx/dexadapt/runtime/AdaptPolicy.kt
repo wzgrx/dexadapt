@@ -45,6 +45,18 @@ object AdaptPolicy {
         choose(local?.takeIf { it.packageName.isEmpty() || it.packageName == packageName },
             bundled?.takeIf { it.packageName.isEmpty() || it.packageName == packageName }, catalog, apkIdentity)
 
+    /** 未得到完整 DEX 身份时不选表。部分表只能由本次扫描交给活动进程，不能从磁盘恢复。 */
+    fun chooseVerified(identity: HostCodeIdentity?, local: SymbolTable?, bundled: SymbolTable?, catalog: String): Choice {
+        if (identity == null) return Choice(null, Source.NONE, true)
+        if (local != null && !local.partial && local.catalog == catalog && identity.matches(local)) {
+            return Choice(local, Source.LOCAL, false)
+        }
+        if (bundled != null && !bundled.partial && (bundled.catalog.isEmpty() || bundled.catalog == catalog) && identity.matches(bundled)) {
+            return Choice(bundled, Source.BUNDLED, false)
+        }
+        return Choice(null, Source.NONE, true)
+    }
+
     fun decideForPackage(packageName: String, host: String, bundled: SymbolTable?, local: SymbolTable?, catalog: String, apkIdentity: String, dexDigest: () -> String?): Decision =
         decide(host, bundled?.takeIf { it.packageName.isEmpty() || it.packageName == packageName },
             local?.takeIf { it.packageName.isEmpty() || it.packageName == packageName }, catalog, apkIdentity, dexDigest)

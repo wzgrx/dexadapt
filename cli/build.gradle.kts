@@ -37,7 +37,7 @@ distributions {
             from(rootProject.file("README.md"))
             from(rootProject.file("CHANGELOG.md"))
             from(rootProject.file("LICENSE"))
-            into("docs") { from(rootProject.file("docs/SPEC.md"));from(rootProject.file("docs/DESIGN.md")) }
+            into("docs") { from(rootProject.file("docs/SPEC.md"));from(rootProject.file("docs/DESIGN.md"));from(rootProject.file("docs/UPGRADE_RUNTIME.md")) }
         }
     }
 }
@@ -46,6 +46,12 @@ distributions {
 tasks.test {
     // Gradle 的测试工作进程用隔离的类加载器，java.class.path 不一定含被测程序依赖。
     systemProperty("dexadapt.test.cliClasspath", sourceSets.test.get().runtimeClasspath.asPath)
+    val upgrade = providers.environmentVariable("DEXADAPT_UPGRADE_EVIDENCE").orNull?.takeIf { it.isNotBlank() }
+    inputs.property("requireUpgradeScenarios", providers.environmentVariable("DEXADAPT_REQUIRE_UPGRADE").getOrElse("0"))
+    if (upgrade != null) {
+        outputs.upToDateWhen { false }
+        maxHeapSize = "6g"
+    }
     val manifest = providers.environmentVariable("DEXADAPT_CONSUMER_MANIFEST").orNull?.takeIf { it.isNotBlank() }
     inputs.property("requireConsumerSamples", providers.environmentVariable("DEXADAPT_REQUIRE_CONSUMERS").getOrElse("0"))
     if (manifest != null) {

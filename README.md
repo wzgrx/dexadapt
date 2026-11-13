@@ -1,7 +1,9 @@
 # DexAdapt
 
-当前版本：[0.7.0](https://github.com/wzgrx/dexadapt/releases/tag/v0.7.0)。
+当前版本：[0.8.0](https://github.com/wzgrx/dexadapt/releases/tag/v0.8.0)。
 
+- `UpgradeCoordinator` 统一宿主首次打开、升级、模块启动、定时检查与重试；重复事件合并，过时结果不发布。
+- 运行时按包名、版本码与完整 DEX 选表，先解析已开启且可热安装的功能；降级可复用完全匹配的完整表。
 - `.apks` / `.xapk` 解包缓存按实际 APK 内容定位；同名同大小换包不会读取旧拆包，损坏或缺失的成员会重新提取。
 - 矩阵按符号和递归依赖增量解析及计算余量；整表命中时不打开 Dexlib 索引。
 - 发布使用哔哩净界与红薯净界的真实 APK 验证。详见 [更新日志](CHANGELOG.md)。
@@ -119,6 +121,8 @@ tool_timeout_sec = 900
 3. 宿主进程里用 `runtime` 的 `AdaptPolicy.choose` 选表、`SymbolLinker` 拿 `Method` / `Field`；
 4. 模块 App 里用 `AdaptPolicy.decide` 判断要不要扫、`DexKitScan` + `SymbolResolver` 本机适配、`AdaptPolicy.stamp` 盖身份，
    再把表交给宿主进程热替换。
+
+0.8.0 的升级流程接入见 [运行时升级指南](docs/UPGRADE_RUNTIME.md)；旧选表 API 保持兼容，新接入必须使用严格身份入口。
 
 已经用了某个 Hook 框架的模块不用改写法，用 `hooks` 模块的适配（成员按符号表找、找不到不挂、观察模式自动接上）：
 

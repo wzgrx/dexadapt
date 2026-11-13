@@ -107,12 +107,13 @@ class SymbolResolver internal constructor(
         val all = stages.flatten().distinctBy { it.id }
         val entries = sortedMapOf<String, Resolved>()
         val missing = sortedMapOf<String, String>()
-        source.prefetchStrings(queryStrings(all.filterNot(skip)))
         val absent = all.filter(skip).map { it.id }.sorted()
         var count = 0
+        val visited = HashSet<String>()
         stages.forEachIndexed { i, stage ->
-            for (s in stage) {
-                if (s.id in entries || s.id in missing) continue
+            val pending = stage.filter { visited.add(it.id) }
+            source.prefetchStrings(queryStrings(pending.filterNot(skip)))
+            for (s in pending) {
                 if (!skip(s)) resolve(s).fold({ entries[s.id] = it }, { missing[s.id] = it.message ?: it.toString() })
                 onProgress(++count, all.size)
             }
