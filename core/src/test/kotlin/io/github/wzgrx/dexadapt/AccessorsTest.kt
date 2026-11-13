@@ -19,6 +19,20 @@ class AccessorsTest {
     }
 
     @Test
+    fun `variants select checked accessors without assuming the primary shape`() {
+        val ctor = MethodSymbol("test.ctor", MethodQuery(
+            variants = listOf(MethodVariant(MethodShape(name = "<init>", params = listOf(type("int"))))),
+        ))
+        val choose = MethodSymbol("test.choose", MethodQuery(
+            shape = MethodShape(params = listOf(type("int")), returns = type("int")),
+            variants = listOf(MethodVariant(MethodShape(params = listOf(type("long")), returns = type("long")))),
+        ))
+        val text = Accessors.kotlin(Catalog(listOf(ctor, choose)), Accessors.Options("x.y"))
+        assertTrue(text.contains("fun ctor(vararg args: Any?): Any = linker.invokeChecked(ids.getValue(\"test.ctor\") as MethodSymbol, null, args) as Any"))
+        assertTrue(text.contains("fun choose(receiver: Any?, vararg args: Any?): Any? = linker.invokeChecked"))
+    }
+
+    @Test
     fun `generates typed accessors per group`() {
         val text = Accessors.kotlin(Catalog(Note), Accessors.Options("x.y"))
         listOf(

@@ -13,7 +13,6 @@ import io.github.wzgrx.dexadapt.resolve.SymbolSource
 import org.luckypray.dexkit.DexKitBridge
 import java.io.Closeable
 import java.io.File
-import java.util.zip.ZipFile
 
 /** 解析引擎：电脑上的全量索引（dexlib2），或和手机上同一套的 DexKit。 */
 enum class Engine { DEXLIB, DEXKIT }
@@ -26,21 +25,39 @@ class Opened(val set: ApkSet, val info: ApkInfo, val source: SymbolSource, priva
 }
 
 object Engines {
-    fun open(path: File, engine: Engine): Opened {
+    internal class Input(val set: ApkSet, val info: ApkInfo, val code: List<Pair<File, String>>) {
+        val identity = DexDigest.combine(code.map { it.second })
+    }
+
+    internal fun identify(path: File): Input {
         val set = ApkSet.open(path)
         val info = ApkInspector.inspect(set)
-        // 带代码的拆分包也要算（类以 base 为准，和类加载器一样）。
-        val withCode = set.files.filter { f -> ZipFile(f).use { z -> z.getEntry("classes.dex") != null } }
+        val code = set.files.filter(DexDigest::hasCode).map { it to DexDigest.of(it) }
+        return Input(set, info, code)
+    }
+
+    fun open(path: File, engine: Engine): Opened = open(identify(path), engine)
+
+    internal fun open(input: Input, engine: Engine): Opened {
+        val (set, info, withCode) = input.let { Triple(it.set, it.info, it.code) }
         return when (engine) {
             Engine.DEXLIB -> {
-                val sources = withCode.map { DexIndex.load(it) }
+                val sources = withCode.map { (file, digest) -> DexIndex.loadWithIdentity(file, digest) }
                 Opened(set, info, combineSource(sources), {}, sources)
             }
             Engine.DEXKIT -> {
                 DesktopDexKit.load()
-                val bridges = withCode.map { DexKitBridge.create(it.path) }
-                val sources = bridges.mapIndexed { i, b -> DexKitSource(b, DexDigest.of(withCode[i])) }
-                Opened(set, info, combineSource(sources), { bridges.forEach { runCatching { it.close() } } })
+                val bridges = ArrayList<DexKitBridge>()
+                try {
+                    val sources = withCode.map { (file, digest) ->
+                        val bridge = DexKitBridge.create(file.path).also(bridges::add)
+                        DexKitSource(bridge, digest)
+                    }
+                    Opened(set, info, combineSource(sources), { bridges.forEach { runCatching { it.close() } } })
+                } catch (error: Throwable) {
+                    bridges.forEach { runCatching { it.close() } }
+                    throw error
+                }
             }
         }
     }

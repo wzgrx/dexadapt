@@ -115,9 +115,17 @@ class DexIndex private constructor(
          */
         fun load(apk: File, cache: Boolean = true): DexIndex {
             val digest = if (cache && apk.extension.lowercase() != "dex") runCatching { DexDigest.of(apk) }.getOrNull() else null
+            return loadWithIdentity(apk, digest)
+        }
+
+        /** 调用方已经计算过实际 DEX 摘要；不再次读取 APK 求摘要。 */
+        fun loadWithIdentity(apk: File, digest: String?): DexIndex {
             val key = digest?.let(IndexCache::keyForDigest)
             key?.let { IndexCache.read(it, digest) }?.let { return it }
-            return parse(apk).also { index -> key?.let { IndexCache.write(it, index) } }
+            return parse(apk).also { index ->
+                require(digest == null || index.dexSha256 == digest) { "索引与已核对的 DEX 身份不一致" }
+                key?.let { IndexCache.write(it, index) }
+            }
         }
 
         private fun parse(apk: File): DexIndex {

@@ -74,7 +74,7 @@ object Mcp {
             "matrix", "多个版本一起解析：符号表、余量（单点依赖的查询）、版本矩阵（漂移）；parity 时再用 DexKit 解析要求逐条一致。",
             listOf(
                 Param("spec", "string", "spec 文件", true), Param("apk", "array", "安装包路径（多个）", true),
-                Param("channel", "array", "安装包=渠道"), Param("parity", "boolean", "再用 DexKit 核对"), Param("incremental","boolean","复用身份/引擎/spec完全一致的矩阵结果，parity仍重新运行"), Param("out", "string", "输出目录"),
+                Param("channel", "array", "安装包=渠道"), Param("parity", "boolean", "再用 DexKit 核对"), Param("parity_known_only", "boolean", "只对照已知构建"), Param("incremental","boolean","按符号和递归依赖复用余量，parity仍重新运行"), Param("out", "string", "输出目录"),
             ),
             report = "matrix.md", defaultOut = "dexadapt-matrix",
         ),

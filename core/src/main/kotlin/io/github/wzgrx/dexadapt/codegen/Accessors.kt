@@ -105,6 +105,10 @@ object Accessors {
                 appendLine("        fun set${raw.replaceFirstChar(Char::uppercaseChar)}(target: Any?, value: $t) = f(\"$id\").set(target, value)")
             }
             is MethodSymbol -> {
+                if (s.query.variants.isNotEmpty()) {
+                    multiMethod(s, raw, name)
+                    return
+                }
                 val shape = s.query.shape
                 val ret = shape.returns?.let(::kotlinType) ?: "Any?"
                 val ctor = shape.name == "<init>"
@@ -136,6 +140,21 @@ object Accessors {
                 appendLine("        val ${raw}Available: Boolean get() = linker.available(ids.getValue(\"$id\"))")
             }
         }
+    }
+
+    private fun StringBuilder.multiMethod(symbol: MethodSymbol, raw: String, name: String) {
+        val id = symbol.id
+        val shapes = symbol.query.shapesFor(null, "").map { it.second }
+        val ctor = shapes.all { it.name == "<init>" }
+        require(ctor || shapes.none { it.name == "<init>" }) { "$id: cannot generate one accessor for constructors and methods" }
+        val ret = if (ctor) "Any" else shapes.map { it.returns }.distinct().singleOrNull()?.let(::kotlinType) ?: "Any?"
+        val signature = if (ctor) "vararg args: Any?" else "receiver: Any?, vararg args: Any?"
+        val receiver = if (ctor) "null" else "receiver"
+        val call = "linker.invokeChecked(ids.getValue(\"$id\") as MethodSymbol, $receiver, args)"
+        appendLine("        /** `$id`：多签名。传入当前宿主签名的参数。 */")
+        if (ret == "Unit") appendLine("        fun $name($signature) { $call }")
+        else appendLine("        fun $name($signature): $ret = $call${castTo(ret)}")
+        appendLine("        val ${raw}Available: Boolean get() = linker.available(ids.getValue(\"$id\"))")
     }
 
     /** 查询里的类型 → Kotlin 类型（写不出来的一律 Any?）。 */

@@ -28,9 +28,9 @@ private const val USAGE = """dexadapt <命令> [参数]
   probe --spec <spec.yaml> --apk <安装包> [--baseline <旧spec>] [--build <构建标识>]
       [--id <符号> ...] [--engine dexlib|dexkit] [--json] [--out <报告文件>]
       只解析；指定 --id 时也检查下游依赖。对照旧 spec，退化或目标变化返回 3。
-  matrix --spec <spec.yaml> --apk <安装包> [--apk ...] [--channel <安装包>=<渠道>] [--parity] [--incremental] [--out <目录>]
+  matrix --spec <spec.yaml> --apk <安装包> [--apk ...] [--channel <安装包>=<渠道>] [--parity] [--parity-known-only] [--incremental] [--out <目录>]
       多个版本一起解析：每个版本的符号表、余量（单点依赖）、版本矩阵（漂移）；--parity 再用 DexKit 解析一遍、
-      要求和 dexlib 逐条相同。输出 tables/<versionCode>.json、margin.json、matrix.md、manifest.json；--incremental区分fresh/reused，parity始终新跑。
+      要求和 dexlib 逐条相同。输出 tables/<versionCode>.json、margin.json、matrix.md、manifest.json；--incremental 按符号复用余量，parity 始终新跑。--parity-known-only 跳过未知构建检查。
 
   diff <旧安装包> <新安装包> [--spec <spec.yaml>] [--old-build <标识>] [--new-build <标识>] [--out <目录>]
       升级分析：包、签名、清单、原生库、代码规模、没混淆的包和类、网络接口、字符串，以及混淆映射（旧类 → 新类）。
@@ -155,7 +155,7 @@ class Opts(args: List<String>) {
     fun flag(key: String): Boolean = key in flags
 
     private companion object {
-        val BOOLEAN = setOf("json", "parity", "incremental", "verify-repairs")
+        val BOOLEAN = setOf("json", "parity", "incremental", "verify-repairs", "parity-known-only")
     }
 }
 
@@ -200,38 +200,81 @@ private fun runMatrix(opts: Opts): MatrixRun {
     val tables = LinkedHashMap<Build, SymbolTable>();val margins = LinkedHashMap<Build, List<SymbolMargin>>()
     val parity = ArrayList<String>();val manifest=ArrayList<kotlinx.serialization.json.JsonObject>()
     val engineIdentity=MatrixCache.engine();val specIdentity=MatrixCache.hash(spec.toJson())
-    var failed=false
-    for ((number,apk) in apks.withIndex()) {
-        println("[${number+1}/${apks.size}] 打开 ${apk.name}")
-        val started=System.currentTimeMillis()
-        val (build, table) = Engines.open(apk, Engine.DEXLIB).use { o ->
-            val identity=o.codeIdentity;val b=Engines.build(apk,o.info,channels).copy(packageName=o.info.packageName,codeIdentity=identity)
-            val variant=o.info.packageName+"|"+b.id+"|"+identity
-            val key=MatrixCache.hash("$specIdentity|$engineIdentity|$variant")
-            val cached=if(opts.flag("incremental"))MatrixCache.read(File(out,".matrix-cache"),key) else null
-            val pair=if(cached!=null && cached.first.versionCode==o.info.versionCode && cached.first.dexSha256==o.source.dexSha256)cached else {
-                val resolver=SymbolResolver.forBuild(o.source,o.info.versionCode,b.id)
-                val t=resolver.table(spec.catalog.symbols, onProgress = { done,total->if(done%100==0 || done==total)println("  ${b.id} 解析 $done/$total") }).copy(packageName=o.info.packageName)
-                println("  ${b.id} 计算查询余量")
-                val rows=resolver.margins(spec.catalog.symbols)
-                MatrixCache.write(File(out,".matrix-cache"),key,t,rows);t to rows
+    val fingerprints = IncrementalMargins.fingerprints(spec)
+    val cache = File(out, ".matrix-cache")
+    val knownOnly = opts.flag("parity-known-only")
+    require(!knownOnly || opts.flag("parity")) { "--parity-known-only 需要 --parity" }
+    var failed = false
+    for ((number, apk) in apks.withIndex()) {
+        println("[${number + 1}/${apks.size}] 打开 ${apk.name}")
+        val started = System.nanoTime()
+        val input = Engines.identify(apk)
+        val identified = System.nanoTime()
+        val identity = input.identity
+        val build = Engines.build(apk, input.info, channels).copy(packageName = input.info.packageName, codeIdentity = identity)
+        val variantKey = IncrementalMargins.key("", build.packageName, build.id, identity)
+        val key = IncrementalMargins.key(engineIdentity, build.packageName, build.id, identity)
+        val previous = if (opts.flag("incremental")) IncrementalMargins.read(cache, key) else null
+        val cached = previous?.takeIf { it.spec == specIdentity }?.let {
+            runCatching { SymbolTable.fromJson(it.table) }.getOrNull()?.takeIf { t ->
+                t.dexSha256 == identity && t.versionCode == build.versionCode && t.packageName == build.packageName &&
+                    t.missing.isEmpty() && it.rows.mapValues { (_, row) -> row.fingerprint } == fingerprints
             }
-            margins[b]=pair.second
-            val mode=if(cached!=null && cached==pair)"reused" else "fresh"
-            manifest+=kotlinx.serialization.json.JsonObject(mapOf("build" to kotlinx.serialization.json.JsonPrimitive(b.id),
-                "package" to kotlinx.serialization.json.JsonPrimitive(o.info.packageName),"versionCode" to kotlinx.serialization.json.JsonPrimitive(b.versionCode),
-                "codeIdentity" to kotlinx.serialization.json.JsonPrimitive(identity),"mode" to kotlinx.serialization.json.JsonPrimitive(mode),
-                "variantKey" to kotlinx.serialization.json.JsonPrimitive(MatrixCache.hash(variant)),"tablePath" to kotlinx.serialization.json.JsonPrimitive("tables/$key.json"),"cacheKey" to kotlinx.serialization.json.JsonPrimitive(key),"elapsedMs" to kotlinx.serialization.json.JsonPrimitive(System.currentTimeMillis()-started)))
-            println("${b.label}（${b.id}）：${pair.first.entries.size} 个找到，${pair.first.missing.size} 个缺失，$mode（${(System.currentTimeMillis()-started)/1000} 秒）")
-            b to pair.first
         }
+        var indexMs = 0L
+        var resolveMs = 0L
+        var marginMs = 0L
+        var openedIndex = false
+        val (table, result) = if (cached != null) {
+            val rows = IncrementalMargins.collect(spec.catalog.symbols, fingerprints, cached, previous.rows) {
+                error("完整矩阵缓存的行指纹不一致")
+            }
+            cached to rows
+        } else Engines.open(input, Engine.DEXLIB).use { o ->
+            openedIndex = true
+            val indexed = System.nanoTime()
+            indexMs = (indexed - identified) / 1_000_000
+            require(o.codeIdentity == identity) { "索引的完整 DEX 身份不一致" }
+            val resolver = SymbolResolver.forBuild(o.source, o.info.versionCode, build.id)
+            val t = resolver.table(spec.catalog.symbols, onProgress = { done, total ->
+                if (done % 100 == 0 || done == total) println("  ${build.id} 解析 $done/$total")
+            }).copy(packageName = build.packageName)
+            val resolved = System.nanoTime()
+            resolveMs = (resolved - indexed) / 1_000_000
+            println("  ${build.id} 计算查询余量")
+            val rows = IncrementalMargins.collect(spec.catalog.symbols, fingerprints, t, previous?.rows.orEmpty(), resolver::margin)
+            marginMs = (System.nanoTime() - resolved) / 1_000_000
+            t to rows
+        }
+        if (cached == null && table.missing.isEmpty()) {
+            IncrementalMargins.write(cache, key, IncrementalMargins.Snapshot(specIdentity, table.toJson(), result.rows))
+        }
+        margins[build] = result.margins
+        val mode = when {
+            cached != null -> "reused"
+            result.reused > 0 -> "partial"
+            else -> "fresh"
+        }
+        val tableKey = MatrixCache.hash("$specIdentity|$key")
+        fun j(value: String) = kotlinx.serialization.json.JsonPrimitive(value)
+        fun j(value: Number) = kotlinx.serialization.json.JsonPrimitive(value)
+        manifest += kotlinx.serialization.json.JsonObject(mapOf(
+            "build" to j(build.id), "package" to j(build.packageName), "versionCode" to j(build.versionCode),
+            "codeIdentity" to j(identity), "mode" to j(mode), "variantKey" to j(variantKey),
+            "tablePath" to j("tables/$tableKey.json"), "cacheKey" to j(key),
+            "indexOpened" to kotlinx.serialization.json.JsonPrimitive(openedIndex),
+            "identityMs" to j((identified - started) / 1_000_000), "indexMs" to j(indexMs),
+            "resolveMs" to j(resolveMs), "marginMs" to j(marginMs), "marginReused" to j(result.reused),
+            "marginComputed" to j(result.computed), "elapsedMs" to j((System.nanoTime() - started) / 1_000_000),
+        ))
+        println("${build.label}（${build.id}）：${table.entries.size} 个找到，${table.missing.size} 个缺失，$mode；余量重算 ${result.computed}，复用 ${result.reused}")
         tables[build]=table
         if(table.missing.isNotEmpty())failed=true
         val row = manifest.last()
         val tablePath = row.getValue("tablePath").jsonPrimitive.content
         File(out,tablePath).apply { parentFile.mkdirs() }.writeText(table.toJson()+"\n")
         if(opts.flag("parity")) {
-            Engines.open(apk, Engine.DEXKIT).use { o ->
+            Engines.open(input, Engine.DEXKIT).use { o ->
                 val kit = SymbolResolver.forBuild(o.source, o.info.versionCode, build.id).table(spec.catalog.symbols)
                 val different = (table.entries.keys + kit.entries.keys + table.missing.keys + kit.missing.keys +
                     table.absent + kit.absent).filter {
@@ -246,11 +289,13 @@ private fun runMatrix(opts: Opts): MatrixRun {
                 }
                 if (!sameDex || different.isNotEmpty()) failed = true
                 // 保留原来的设备首次适配检查（不使用手工构建标识）；比对基于最终目标，已知缺失不参与。
-                val unknown = SymbolResolver.forBuild(o.source, o.info.versionCode, null).table(spec.catalog.symbols)
-                val drift = table.entries.keys.filter { table.entries[it] != unknown.entries[it] }.sorted()
-                if (drift.isNotEmpty()) {
-                    parity += "${build.label}: DexKit 未知构建和内置表有 ${drift.size} 个差异：${drift.take(10).joinToString()}"
-                    failed = true
+                if (!knownOnly) {
+                    val unknown = SymbolResolver.forBuild(o.source, o.info.versionCode, null).table(spec.catalog.symbols)
+                    val drift = table.entries.keys.filter { table.entries[it] != unknown.entries[it] }.sorted()
+                    if (drift.isNotEmpty()) {
+                        parity += "${build.label}: DexKit 未知构建和内置表有 ${drift.size} 个差异：${drift.take(10).joinToString()}"
+                        failed = true
+                    }
                 }
             }
         }

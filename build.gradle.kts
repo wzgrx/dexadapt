@@ -5,7 +5,7 @@ plugins {
 
 allprojects {
     group = "io.github.wzgrx.dexadapt"
-    version = "0.5.0"
+    version = "0.6.0"
 }
 
 // 每个模块：JVM 17 字节码（Android 也能用）、JUnit 4、发布到本地 Maven（红薯助手先用复合构建直接引用源码）。

@@ -6,7 +6,10 @@ import io.github.wzgrx.dexadapt.MethodSymbol
 import io.github.wzgrx.dexadapt.Resolved
 import io.github.wzgrx.dexadapt.Symbol
 import io.github.wzgrx.dexadapt.SymbolTable
+import java.lang.reflect.Constructor
 import java.lang.reflect.Executable
+import java.lang.reflect.Method
+import java.lang.reflect.Modifier
 import java.lang.reflect.Field
 import java.util.concurrent.ConcurrentHashMap
 
@@ -91,6 +94,42 @@ class SymbolLinker(
         }.apply { isAccessible = true }
     } as Executable
 
+    /**
+     * 多签名访问器：先以当前表链接一次，再按实际 JVM 签名验证和调用。
+     * 精确验证基本类型的装箱类型，不做数值转换；只解包实际宿主调用抛出的异常。
+     */
+    fun invokeChecked(symbol: MethodSymbol, receiver: Any?, args: Array<out Any?>): Any? {
+        val target = method(symbol)
+        val params = target.parameterTypes
+        fun requireArgument(ok: Boolean, reason: () -> String) {
+            require(ok) {
+                val name = if (target is Constructor<*>) "<init>" else target.name
+                val descriptor = target.declaringClass.name + "#" + name +
+                    params.joinToString(prefix = "(", postfix = ")") { it.typeName }
+                "${symbol.id} → $descriptor：${reason()}"
+            }
+        }
+        val staticOrConstructor = target is Constructor<*> || Modifier.isStatic(target.modifiers)
+        requireArgument(if (staticOrConstructor) receiver == null else target.declaringClass.isInstance(receiver)) {
+            if (staticOrConstructor) "接收者应为 null" else "接收者应为 ${target.declaringClass.name}"
+        }
+        requireArgument(params.size == args.size) { "需要 ${params.size} 个参数，收到 ${args.size} 个" }
+        for (i in params.indices) {
+            val type = params[i]
+            val arg = args[i]
+            val compatible = if (arg == null) !type.isPrimitive else (BOXED[type] ?: type).isInstance(arg)
+            requireArgument(compatible) { "参数 ${i + 1} 需要 ${type.typeName}，收到 ${arg?.javaClass?.name ?: "null"}" }
+        }
+        return try {
+            when (target) {
+                is Constructor<*> -> target.newInstance(*args)
+                is Method -> target.invoke(receiver, *args)
+            }
+        } catch (e: java.lang.reflect.InvocationTargetException) {
+            throw e.targetException
+        }
+    }
+
     /** [symbol] 是这个版本本来就没有的（[SymbolTable.absent]），不是没适配上。 */
     fun absent(symbol: Symbol): Boolean = symbol.id in (pinned.get() ?: state).absent
 
@@ -143,6 +182,17 @@ class SymbolLinker(
     }
 
     private companion object {
+        val BOXED = mapOf(
+            Boolean::class.javaPrimitiveType to Boolean::class.javaObjectType,
+            Byte::class.javaPrimitiveType to Byte::class.javaObjectType,
+            Short::class.javaPrimitiveType to Short::class.javaObjectType,
+            Char::class.javaPrimitiveType to Char::class.javaObjectType,
+            Int::class.javaPrimitiveType to Int::class.javaObjectType,
+            Long::class.javaPrimitiveType to Long::class.javaObjectType,
+            Float::class.javaPrimitiveType to Float::class.javaObjectType,
+            Double::class.javaPrimitiveType to Double::class.javaObjectType,
+        )
+
         val PRIMITIVES = mapOf(
             "void" to Void.TYPE, "boolean" to java.lang.Boolean.TYPE, "byte" to java.lang.Byte.TYPE,
             "short" to java.lang.Short.TYPE, "char" to Character.TYPE, "int" to Integer.TYPE,
