@@ -64,33 +64,36 @@ class RecoveryOutbox(private val clock: () -> Long = System::nanoTime) {
         var failures: Int = 0,
         var inFlight: Message? = null,
         var epoch: Long = 0,
+        val deadline: Long,
     )
     private var target: Target? = null
 
     @Synchronized fun bind(token: String) {
         require(token.isNotBlank())
-        if (target?.token != token) target = Target(token, clock())
+        if (target?.token != token) target = Target(token, clock(), deadline = clock() + TimeUnit.MINUTES.toNanos(3))
     }
 
     @Synchronized fun needsEffect(token: String): Boolean =
         target?.let { it.token != token || !it.done && it.effectAt == null } ?: true
 
-    @Synchronized fun effect(token: String) {
+    @Synchronized fun effect(token: String, observed: Long = clock()) {
         if (target?.token != token) bind(token)
-        target?.let { if (!it.done && it.effectAt == null) it.effectAt = clock() }
+        target?.let { if (!it.done && it.effectAt == null) it.effectAt = observed }
     }
 
     /** 仅当使用方确认新令牌对应原来已经绑定的同一张表时调用。 */
     @Synchronized fun renew(previous: String, next: String): Boolean {
         val old = target?.takeIf { it.token == previous && !it.done } ?: return false
         require(next.isNotBlank() && next != previous)
-        target = Target(next, old.boundAt, old.effectAt)
+        target = Target(next, old.boundAt, old.effectAt, deadline = old.deadline)
         return true
     }
 
     @Synchronized fun next(): Message? {
         val t = target ?: return null
-        if (t.done || t.inFlight != null || clock() < t.epoch) return null
+        val now = clock()
+        if (now >= t.deadline) t.done = true
+        if (t.done || t.inFlight != null || now < t.epoch) return null
         val event = if (!t.bound) Message(t.token, RecoveryReceipt.State.HOST_BOUND, t.boundAt)
             else Message(t.token, RecoveryReceipt.State.FIRST_EFFECT, t.effectAt ?: return null)
         t.inFlight = event
