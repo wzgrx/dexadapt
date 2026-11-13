@@ -118,4 +118,16 @@ class UpgradeCoordinatorTest {
         assertNull(store.local(middle, "catalog"))
         assertEquals(table(newer), store.local(newer, "catalog"))
     }
+    @Test fun `persisting a table never persists its process receipt`() {
+        val dir = temp.newFolder()
+        val store = DirectoryAdaptationStore(dir)
+        store.save(old, table(old).copy(recoveryToken = "old-session:42"))
+        assertEquals(table(old), store.local(old, "catalog"))
+        val persisted = dir.listFiles()!!.single()
+        assertFalse(persisted.readText().contains("old-session:42"))
+        // Also read files produced by callers of the older store implementation.
+        persisted.writeText(table(old).copy(recoveryToken = "legacy-session:1").toJson())
+        assertEquals(table(old), DirectoryAdaptationStore(dir).local(old, "catalog"))
+    }
+
 }

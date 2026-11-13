@@ -24,10 +24,11 @@ class DirectoryAdaptationStore(
         val path = path(identity, catalog)
         if (path.length() !in 1..MAX_TABLE_BYTES) null else SymbolTable.fromJson(path.readText())
     }.getOrNull()?.takeIf { !it.partial && it.catalog == catalog && identity.matches(it) }
+        ?.let { if (it.recoveryToken.isEmpty()) it else it.copy(recoveryToken = "") }
 
     override fun save(identity: HostCodeIdentity, table: SymbolTable) {
         require(!table.partial && table.catalog.isNotBlank() && identity.matches(table))
-        val bytes = table.toJson().toByteArray(Charsets.UTF_8)
+        val bytes = table.copy(recoveryToken = "").toJson().toByteArray(Charsets.UTF_8)
         require(bytes.size.toLong() <= MAX_TABLE_BYTES)
         Files.createDirectories(dir.toPath())
         val temp = Files.createTempFile(dir.toPath(), "adapt-", ".tmp")

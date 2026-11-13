@@ -33,23 +33,47 @@ class RecoveryReceipt {
         return next
     }
 
+    enum class Rejection { EXPIRED, IDENTITY_CHANGED, CATALOG_CHANGED, INVALID_TRANSITION }
+
+    sealed interface Confirmation {
+        data class Advanced(val status: Status) : Confirmation
+        data class Duplicate(val status: Status) : Confirmation
+        data class Rejected(val reason: Rejection) : Confirmation
+    }
+
+    /** 在一次锁内验证并推进。只有 [Confirmation.Advanced] 应触发记录或重试。 */
+    @Synchronized fun confirm(token: String, identity: HostCodeIdentity, catalog: String, state: State): Confirmation {
+        val current = latest?.takeIf { it.delivery.token == token } ?: return Confirmation.Rejected(Rejection.EXPIRED)
+        if (current.delivery.identity != identity) return Confirmation.Rejected(Rejection.IDENTITY_CHANGED)
+        if (current.delivery.catalog != catalog) return Confirmation.Rejected(Rejection.CATALOG_CHANGED)
+        return advance(current, state)
+    }
+
     @Synchronized fun acknowledge(delivery: Delivery, state: State): Boolean {
-        val current = latest ?: return false
-        if (current.delivery != delivery || state == State.DELIVERED) return false
-        if (current.state == state) return true
+        val current = latest?.takeIf { it.delivery == delivery } ?: return false
+        return advance(current, state) !is Confirmation.Rejected
+    }
+
+    @Synchronized fun acknowledge(token: String, state: State): Boolean {
+        val current = latest?.takeIf { it.delivery.token == token } ?: return false
+        return advance(current, state) !is Confirmation.Rejected
+    }
+
+    private fun advance(current: Status, state: State): Confirmation {
+        if (state == State.DELIVERED) return Confirmation.Rejected(Rejection.INVALID_TRANSITION)
+        if (current.state == state || (state == State.HOST_BOUND && current.state == State.FIRST_EFFECT)) {
+            return Confirmation.Duplicate(current)
+        }
         val allowed = when (state) {
             State.HOST_BOUND -> current.state == State.DELIVERED
             State.FIRST_EFFECT -> current.state == State.HOST_BOUND
             State.RETRYABLE_FAILURE -> current.state == State.DELIVERED || current.state == State.HOST_BOUND
             State.DELIVERED -> false
         }
-        if (allowed) latest = Status(delivery, state)
-        return allowed
-    }
-
-    @Synchronized fun acknowledge(token: String, state: State): Boolean {
-        val delivery = latest?.delivery ?: return false
-        return delivery.token == token && acknowledge(delivery, state)
+        if (!allowed) return Confirmation.Rejected(Rejection.INVALID_TRANSITION)
+        val next = current.copy(state = state)
+        latest = next
+        return Confirmation.Advanced(next)
     }
 
     @Synchronized fun invalidate() { latest = null }
