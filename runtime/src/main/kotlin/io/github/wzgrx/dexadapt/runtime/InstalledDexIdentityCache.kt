@@ -51,6 +51,19 @@ class InstalledDexIdentityCache(
         it.files.all { file -> file.canReuse(System.currentTimeMillis()) }
     }?.let { VerifiedDigestTicket.fileName(key(packageName, it)) }
 
+    /** 只导出已经由本实例完整核验/从可信通道导入且仍匹配快照的身份，不在此启动读取。 */
+    fun cachedTicket(packageName: String): VerifiedDigestTicket? {
+        val slot = slots[packageName] ?: return null
+        return synchronized(slot) {
+            val entry = slot.entry ?: return@synchronized null
+            val current = capture(packageName) ?: return@synchronized null
+            if (entry.generation != slot.generation.get() || entry.snapshot != current ||
+                !current.files.all { it.canReuse(System.currentTimeMillis()) }) return@synchronized null
+            VerifiedDigestTicket(packageName = packageName, versionCode = entry.identity.versionCode,
+                installation = key(packageName, current), dexSha256 = entry.identity.dexSha256)
+        }
+    }
+
     private fun publish(pkg: String, snapshot: Snapshot, identity: HostCodeIdentity) {
         if (!publishesTickets) return
         val stamp = key(pkg, snapshot)
