@@ -21,6 +21,9 @@ class RecoverySession(private val clock: () -> Long = System::nanoTime) {
     }
 
     @Synchronized fun delivery(): RecoveryReceipt.Delivery? = receipt.status()?.delivery
+    @Synchronized fun belongsToStart(started: Long): Boolean =
+        receipt.status() != null && trace.started == started
+
     @Synchronized fun failurePending(): Boolean = receipt.status()?.state == RecoveryReceipt.State.RETRYABLE_FAILURE
 
     @Synchronized fun confirm(token: String, identity: HostCodeIdentity, catalog: String, state: RecoveryReceipt.State,
@@ -68,9 +71,9 @@ class RecoveryOutbox(private val clock: () -> Long = System::nanoTime) {
     )
     private var target: Target? = null
 
-    @Synchronized fun bind(token: String) {
+    @Synchronized fun bind(token: String, observed: Long = clock()) {
         require(token.isNotBlank())
-        if (target?.token != token) target = Target(token, clock(), deadline = clock() + TimeUnit.MINUTES.toNanos(3))
+        if (target?.token != token) target = Target(token, observed, deadline = clock() + TimeUnit.MINUTES.toNanos(3))
     }
 
     @Synchronized fun needsEffect(token: String): Boolean =

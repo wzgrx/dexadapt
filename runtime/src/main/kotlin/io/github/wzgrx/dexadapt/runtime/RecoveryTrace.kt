@@ -3,7 +3,7 @@ package io.github.wzgrx.dexadapt.runtime
 /** 时间来自同一单调时钟。跨进程时双方应使用 Android elapsedRealtimeNanos。 */
 class RecoveryTrace(
     private val clock: () -> Long = System::nanoTime,
-    private val started: Long = clock(),
+    internal val started: Long = clock(),
 ) {
     enum class Step { REQUESTED, WORK_STARTED, IDENTITY_VERIFIED, SCAN_STARTED, PRIORITY_READY, TABLE_READY,
         TABLE_DELIVERED, HOST_BOUND, FIRST_EFFECT }

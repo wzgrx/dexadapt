@@ -41,6 +41,29 @@ class RecoverySessionTest {
         assertFalse(outbox.needsEffect(renewed.token))
     }
 
+    @Test fun sameTableCanRecordTwoHostStartsAndLateReceiptKeepsBothTimes() {
+        var now = 1_000L
+        val module = RecoverySession { now }
+        val first = module.publish(host, "spec", false, RecoveryTrace({ now }, 100))
+        assertTrue(module.belongsToStart(100))
+        assertFalse(module.belongsToStart(200))
+        assertEquals(Decision.ACCEPTED, module.confirm(first.token, host, "spec", State.HOST_BOUND, 110).decision)
+        assertEquals(Decision.ACCEPTED, module.confirm(first.token, host, "spec", State.FIRST_EFFECT, 150).decision)
+        val second = module.publish(host, "spec", false, RecoveryTrace({ now }, 200))
+        assertNotEquals(first.token, second.token)
+        assertTrue(module.belongsToStart(200))
+        val outbox = RecoveryOutbox { now }
+        outbox.bind(second.token, 210)
+        outbox.effect(second.token, 225)
+        val bound = outbox.next()!!
+        assertEquals(210L, bound.observed)
+        assertEquals(10L, module.confirm(second.token, host, "spec", bound.state, bound.observed).event?.sinceRequestNanos)
+        outbox.complete(bound, RecoveryOutbox.Reply.ACCEPTED)
+        val effect = outbox.next()!!
+        assertEquals(225L, effect.observed)
+        assertEquals(25L, module.confirm(second.token, host, "spec", effect.state, effect.observed).event?.sinceRequestNanos)
+    }
+
     @Test fun onlyNewFailureConsumesBudgetAndNewIdentityResetsIt() {
         val session = RecoverySession()
         repeat(3) { attempt ->
