@@ -1,5 +1,6 @@
 package io.github.wzgrx.dexadapt.runtime
 
+import io.github.wzgrx.dexadapt.ScanTiming
 import io.github.wzgrx.dexadapt.Symbol
 import io.github.wzgrx.dexadapt.SymbolTable
 import io.github.wzgrx.dexadapt.resolve.SymbolGraph
@@ -16,6 +17,8 @@ object StagedAdaptation {
         checkpoint: UpgradeCoordinator.Checkpoint,
         onPartial: (SymbolTable) -> Unit,
         verifiedBuild: String? = null,
+        timing: ScanTiming = ScanTiming.NONE,
+        finish: (SymbolResolver, SymbolTable) -> SymbolTable = { _, table -> table },
     ): SymbolTable {
         require(source.dexSha256 == request.identity.dexSha256) { "解析数据源不匹配已核验的完整 DEX" }
         val problems = SymbolGraph.problems(symbols)
@@ -34,10 +37,10 @@ object StagedAdaptation {
         val stages = listOf(first, remaining).filter { it.isNotEmpty() }
         fun stamp(table: SymbolTable) = table.copy(packageName = request.identity.packageName, catalog = request.catalog, generator = "dexkit")
         checkpoint.check()
-        val resolver = SymbolResolver.forBuild(source, request.identity.versionCode, verifiedBuild)
-        return stamp(resolver.tableInStages(stages, { table ->
+        val resolver = SymbolResolver.forBuild(source, request.identity.versionCode, verifiedBuild).withTiming(timing)
+        return stamp(finish(resolver, resolver.tableInStages(stages, { table ->
             checkpoint.check()
             onPartial(stamp(table))
-        }) { _, _ -> checkpoint.check() })
+        }) { _, _ -> checkpoint.check() }))
     }
 }

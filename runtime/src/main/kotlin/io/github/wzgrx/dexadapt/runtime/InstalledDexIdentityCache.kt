@@ -1,6 +1,7 @@
 package io.github.wzgrx.dexadapt.runtime
 
 import io.github.wzgrx.dexadapt.resolve.DexDigest
+import io.github.wzgrx.dexadapt.ScanTiming
 import java.io.File
 import java.io.IOException
 import java.io.RandomAccessFile
@@ -15,7 +16,7 @@ import java.util.concurrent.atomic.AtomicLong
 class InstalledDexIdentityCache(
     private val snapshot: (String) -> Installation?,
     private val directory: File? = null,
-    private val digest: (List<File>) -> String = DexDigest::of,
+    private val digest: (List<File>) -> String = DEFAULT_DIGEST,
 ) {
     data class Installation(val versionCode: Long, val lastUpdateTime: Long, val files: List<File>)
     private data class FileState(val path: String, val bytes: Long, val modified: FileTime, val key: String?, val changed: FileTime?)
@@ -27,6 +28,35 @@ class InstalledDexIdentityCache(
     }
 
     private val slots = ConcurrentHashMap<String, Slot>()
+    private var timing = ScanTiming.NONE
+    private var readTicket: (String) -> String? = { null }
+    private var publishTicket: (String, String) -> Boolean = { _, _ -> false }
+    private val published = ConcurrentHashMap<String, String>()
+
+    /** 在首次查询之前配置。read 必须只读取模块控制的认证通道，不能直接暴露给未认证输入。 */
+    fun withTickets(read: (String) -> String? = { null }, publish: (String, String) -> Boolean = { _, _ -> false }): InstalledDexIdentityCache {
+        check(slots.isEmpty())
+        readTicket = read; publishTicket = publish
+        return this
+    }
+    fun withTiming(value: ScanTiming): InstalledDexIdentityCache { check(slots.isEmpty()); timing = value; return this }
+
+    /** 仅取可靠快照的票据名，不计算内容摘要；用于模块清理自身生成的核验文件。 */
+    fun ticketName(packageName: String): String? = capture(packageName)?.takeIf {
+        it.files.all { file -> file.canReuse(System.currentTimeMillis()) }
+    }?.let { VerifiedDigestTicket.fileName(key(packageName, it)) }
+
+    private fun publish(pkg: String, snapshot: Snapshot, identity: HostCodeIdentity) {
+        val stamp = key(pkg, snapshot)
+        if (published[pkg] == stamp) return
+        val document = VerifiedDigestTicket(packageName = pkg, versionCode = identity.versionCode,
+            installation = stamp, dexSha256 = identity.dexSha256)
+        val ok = timing.measure("ticket_publish") {
+            runCatching { publishTicket(VerifiedDigestTicket.fileName(stamp), document.toJson()) }.getOrDefault(false)
+        }
+        if (ok) published[pkg] = stamp
+    }
+
 
     fun current(packageName: String): HostCodeIdentity? = current(packageName) {}
 
@@ -49,17 +79,54 @@ class InstalledDexIdentityCache(
             val reusable = before.files.all { it.canReuse(System.currentTimeMillis()) }
             val prior = slot.entry
             if (prior?.generation == generation && prior.snapshot == before && reusable) {
+                publish(packageName, before, prior.identity)
                 return@run prior.identity.takeIf { slot.generation.get() == generation }
             }
             slot.entry = null
             val stored = if (reusable && persistent) load(packageName, before) else null
             if (stored != null && slot.generation.get() == generation && capture(packageName) == before) {
                 slot.entry = Entry(generation, before, stored)
+                publish(packageName, before, stored)
                 return@run stored
             }
+            if (reusable) {
+                val stamp = key(packageName, before)
+                val ticket = timing.measure("ticket_read") {
+                    var document = runCatching { readTicket(VerifiedDigestTicket.fileName(stamp)) }
+                        .getOrNull()?.let(VerifiedDigestTicket::parse)
+                    val lease = if (document == null) runCatching { readTicket(VerifiedDigestTicket.pendingName(stamp)) }
+                        .getOrNull()?.let(DigestReadLease::parse) else null
+                    val now = timing.now()
+                    if (document == null && lease?.installation == stamp && lease.expiresNanos in (now + 1)..(now + 3_000_000_000L)) {
+                        timing.measure("ticket_wait") {
+                            while (timing.now() < lease.expiresNanos && document == null &&
+                                slot.generation.get() == generation) {
+                                try { Thread.sleep(20) } catch (_: InterruptedException) { Thread.currentThread().interrupt(); break }
+                                document = runCatching { readTicket(VerifiedDigestTicket.fileName(stamp)) }
+                                    .getOrNull()?.let(VerifiedDigestTicket::parse)
+                            }
+                        }
+                    }
+                    document
+                }
+                if (ticket?.matches(packageName, before.installation.versionCode, stamp) == true &&
+                    slot.generation.get() == generation && capture(packageName) == before) {
+                    val imported = HostCodeIdentity(packageName, before.installation.versionCode, ticket.dexSha256)
+                    slot.entry = Entry(generation, before, imported)
+                    if (persistent) save(packageName, before, imported)
+                    timing.record("ticket_hit", 0)
+                    return@run imported.takeIf { slot.generation.get() == generation }
+                }
+            }
             val identity = try {
+                if (reusable) {
+                    val stamp = key(packageName, before)
+                    runCatching { publishTicket(VerifiedDigestTicket.pendingName(stamp),
+                        DigestReadLease(stamp, timing.now() + 3_000_000_000L).toJson()) }
+                }
                 onRead()
-                HostCodeIdentity(packageName, before.installation.versionCode, digest(before.installation.files))
+                HostCodeIdentity(packageName, before.installation.versionCode,
+                    timing.measure("digest_full") { if (digest === DEFAULT_DIGEST) DexDigest.of(before.installation.files, timing) else digest(before.installation.files) })
             } catch (_: IOException) {
                 return@run null
             } catch (_: IllegalArgumentException) {
@@ -73,6 +140,7 @@ class InstalledDexIdentityCache(
             if (reusable) {
                 slot.entry = Entry(generation, before, identity)
                 if (persistent) save(packageName, before, identity)
+                publish(packageName, before, identity)
                 if (slot.generation.get() != generation) {
                     record(packageName)?.delete()
                     slot.entry = null
@@ -84,7 +152,7 @@ class InstalledDexIdentityCache(
     }
 
     /** 不等磁盘读取结束；下一次查询不能复用当前代际的结果。 */
-    fun invalidate(packageName: String) { slots.computeIfAbsent(packageName) { Slot() }.generation.incrementAndGet(); record(packageName)?.delete() }
+    fun invalidate(packageName: String) { slots.computeIfAbsent(packageName) { Slot() }.generation.incrementAndGet(); published.remove(packageName); record(packageName)?.delete() }
 
     private fun record(pkg: String): File? = directory?.let { File(it, hash(pkg) + ".identity") }
     private fun hash(value: String): String = io.github.wzgrx.dexadapt.Hex.of(
@@ -123,15 +191,17 @@ class InstalledDexIdentityCache(
                 RandomAccessFile(File(file.path + ".lock"), "rw")
             } catch (_: IOException) { null } catch (_: SecurityException) { null }
             if (lockFile == null) block(false) else lockFile.use { channel ->
-                val lock = try { channel.channel.lock() } catch (_: IOException) { null }
+                val lock = try { timing.measure("digest_lock_wait") { channel.channel.lock() } } catch (_: IOException) { null }
                 if (lock == null) block(false) else lock.use { block(true) }
             }
         }
     }
 
-    private companion object { val locks = ConcurrentHashMap<String, Any>() }
+    private companion object { val locks = ConcurrentHashMap<String, Any>(); val DEFAULT_DIGEST: (List<File>) -> String = DexDigest::of }
 
-    private fun capture(packageName: String): Snapshot? {
+    private fun capture(packageName: String): Snapshot? = timing.measure("install_snapshot") { captureSnapshot(packageName) }
+
+    private fun captureSnapshot(packageName: String): Snapshot? {
         val installation = snapshot(packageName)?.let { it.copy(files = it.files.toList()) } ?: return null
         val files = try {
             installation.files.map(::fileState)

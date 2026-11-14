@@ -149,11 +149,14 @@ object AccessFlag {
 }
 
 object DexDigest {
+    private val dexName = Regex("classes\\d*\\.dex")
     /** 资源拆包不参与代码摘要；顺序与类加载优先级一致。单代码APK沿用原摘要。 */
-    fun of(apks: List<File>): String = combine(apks.filter(::hasCode).map(::of))
+    fun of(apks: List<File>): String = of(apks, io.github.wzgrx.dexadapt.ScanTiming.NONE)
+    fun of(apks: List<File>, timing: io.github.wzgrx.dexadapt.ScanTiming): String =
+        combine(apks.filter(::hasCode).map { of(it, timing) })
 
     fun hasCode(apk: File): Boolean = ZipFile(apk).use { zip ->
-        zip.entries().asSequence().any { it.name.matches(Regex("classes\\d*\\.dex")) }
+        zip.entries().asSequence().any { it.name.matches(dexName) }
     }
 
     fun combine(digests: List<String>): String {
@@ -164,23 +167,39 @@ object DexDigest {
     }
 
     /** [apk] 里 classes*.dex 按文件名（先长度后字典序）拼起来的 SHA-256，和内置符号表的 dexSha256 同一算法。 */
-    fun of(apk: File): String {
+    fun of(apk: File): String = of(apk, io.github.wzgrx.dexadapt.ScanTiming.NONE)
+    fun of(apk: File, timing: io.github.wzgrx.dexadapt.ScanTiming): String {
+        var readNanos = 0L
+        var readCpu = 0L
+        var shaNanos = 0L
+        var shaCpu = 0L
+        val cpuAvailable = timing.cpu() != null
         val digest = MessageDigest.getInstance("SHA-256")
-        ZipFile(apk).use { zip ->
-            zip.entries().asSequence()
-                .filter { it.name.matches(Regex("classes\\d*\\.dex")) }
-                .sortedWith(compareBy({ it.name.length }, { it.name }))
-                .forEach { e ->
+        timing.measure("zip_open") { ZipFile(apk) }.use { zip ->
+            val entries = timing.measure("dex_entry_enumerate") {
+                zip.entries().asSequence().filter { it.name.matches(dexName) }
+                    .sortedWith(compareBy({ it.name.length }, { it.name })).toList()
+            }
+            val buf = ByteArray(1 shl 16)
+            entries.forEach { e ->
                     zip.getInputStream(e).use { input ->
-                        val buf = ByteArray(1 shl 16)
                         while (true) {
+                            val r = timing.now(); val rc = timing.cpu()
                             val n = input.read(buf)
+                            readNanos += timing.now() - r
+                            if (rc != null) readCpu += (timing.cpu() ?: rc) - rc
                             if (n < 0) break
+                            val h = timing.now(); val hc = timing.cpu()
                             digest.update(buf, 0, n)
+                            shaNanos += timing.now() - h
+                            if (hc != null) shaCpu += (timing.cpu() ?: hc) - hc
                         }
                     }
                 }
         }
-        return io.github.wzgrx.dexadapt.Hex.of(digest.digest())
+        val result = io.github.wzgrx.dexadapt.Hex.of(digest.digest())
+        timing.record("zip_read_inflate", readNanos, if (cpuAvailable) readCpu else null)
+        timing.record("sha256_update", shaNanos, if (cpuAvailable) shaCpu else null)
+        return result
     }
 }

@@ -27,7 +27,7 @@ include(":synth")
 include(":libs")
 include(":runtime")
 // Hook 框架适配要编译期的 android.jar（Android SDK）；没有 SDK 的机器上不构建这个模块
-if (androidJar() != null) include(":hooks")
+if (androidJar() != null) { include(":hooks"); include(":android-runtime") }
 include(":cli")
 include(":jadx-plugin")
 

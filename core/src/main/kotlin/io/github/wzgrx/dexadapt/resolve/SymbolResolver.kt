@@ -1,5 +1,6 @@
 package io.github.wzgrx.dexadapt.resolve
 
+import io.github.wzgrx.dexadapt.ScanTiming
 import io.github.wzgrx.dexadapt.ClassQuery
 import io.github.wzgrx.dexadapt.ClassSymbol
 import io.github.wzgrx.dexadapt.FieldSymbol
@@ -41,6 +42,10 @@ class SymbolResolver internal constructor(
     ) : this(source, versionCode, pinFor, skip, log, null)
 
     private val done = HashMap<String, Result<Resolved>>()
+    private var timing = ScanTiming.NONE
+    private val nestedNanos = ArrayList<Long>()
+    fun withTiming(value: ScanTiming): SymbolResolver { check(done.isEmpty()); timing = value; return this }
+
     /** 正在解析的符号（依赖链），用来发现成环。 */
     private val resolving = LinkedHashSet<String>()
 
@@ -84,8 +89,9 @@ class SymbolResolver internal constructor(
         }
         val entries = sortedMapOf<String, Resolved>()
         val missing = sortedMapOf<String, String>()
-        source.prefetchStrings(queryStrings(symbols.filter { !skip(it) && it.id !in verifiedEntries }))
+        timing.measure("strings_prefetch") { source.prefetchStrings(queryStrings(symbols.filter { !skip(it) && it.id !in verifiedEntries })) }
         val absent = symbols.filter(skip).map { it.id }.distinct().sorted()
+        absent.forEach { timing.record("symbol_absent", 0, symbol = it) }
         symbols.forEachIndexed { i, s ->
             val started = System.nanoTime()
             if (!skip(s)) resolve(s).fold({ entries[s.id] = it }, { missing[s.id] = it.message ?: it.toString() })
@@ -108,11 +114,12 @@ class SymbolResolver internal constructor(
         val entries = sortedMapOf<String, Resolved>()
         val missing = sortedMapOf<String, String>()
         val absent = all.filter(skip).map { it.id }.sorted()
+        absent.forEach { timing.record("symbol_absent", 0, symbol = it) }
         var count = 0
         val visited = HashSet<String>()
         stages.forEachIndexed { i, stage ->
             val pending = stage.filter { visited.add(it.id) }
-            source.prefetchStrings(queryStrings(pending.filterNot(skip)))
+            timing.measure("stage_strings_prefetch") { source.prefetchStrings(queryStrings(pending.filterNot(skip))) }
             for (s in pending) {
                 if (!skip(s)) resolve(s).fold({ entries[s.id] = it }, { missing[s.id] = it.message ?: it.toString() })
                 onProgress(++count, all.size)
@@ -132,6 +139,20 @@ class SymbolResolver internal constructor(
     }
 
     fun resolve(symbol: Symbol): Result<Resolved> {
+        val began = timing.now()
+        val cpu = timing.cpu()
+        val cached = symbol.id in done
+        nestedNanos.add(0)
+        return try { resolveInternal(symbol) } finally {
+            val elapsed = timing.now() - began
+            val child = nestedNanos.removeAt(nestedNanos.lastIndex)
+            if (nestedNanos.isNotEmpty()) nestedNanos[nestedNanos.lastIndex] += elapsed
+            timing.record("symbol_resolve", elapsed, cpu?.let { old -> timing.cpu()?.minus(old) },
+                symbol.id, cached, (elapsed - child).coerceAtLeast(0))
+        }
+    }
+
+    private fun resolveInternal(symbol: Symbol): Result<Resolved> {
         done[symbol.id]?.let { return it }
         if (symbol.id in resolving) {
             // 成环：不缓存，交给链上最外层的符号记成失败。

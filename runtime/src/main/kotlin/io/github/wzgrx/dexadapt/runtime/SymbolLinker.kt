@@ -80,6 +80,18 @@ class SymbolLinker(
         state = State(newTable)
     }
 
+    /** 只允许同一内容的交付元数据更新；身份、目录和目标变化必须走正常替换。 */
+    @Synchronized fun updateDelivery(expected: SymbolTable, delivered: SymbolTable): Boolean {
+        val old = state
+        if (old.table !== expected || expected.versionCode != delivered.versionCode ||
+            expected.packageName != delivered.packageName || expected.dexSha256 != delivered.dexSha256 ||
+            expected.partial != delivered.partial || expected.entries != delivered.entries ||
+            expected.missing != delivered.missing || expected.absent != delivered.absent || expected.guesses != delivered.guesses ||
+            expected.catalog.isNotEmpty() && expected.catalog != delivered.catalog) return false
+        state = State(delivered, old.cache, old.ids)
+        return true
+    }
+
     /** 只改当前表的交付令牌；解析对象和进行中的读取快照保持有效。 */
     @Synchronized fun updateRecoveryToken(expected: SymbolTable, token: String): Boolean {
         val old = state

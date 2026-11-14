@@ -14,7 +14,7 @@ class UpgradeCoordinator(
     private val observe: (Report) -> Unit = {},
     private val nanoTime: () -> Long = System::nanoTime,
 ) {
-    enum class Trigger { HOST_FIRST_OPEN, HOST_PACKAGE_CHANGED, MODULE_STARTED, PERIODIC, RETRY }
+    enum class Trigger { HOST_FIRST_OPEN, HOST_PACKAGE_CHANGED, MODULE_STARTED, PERIODIC, RETRY, MANUAL_SCAN }
     enum class Outcome { SCANNED, REUSED, SUPERSEDED, FAILED }
 
     data class Feature(val id: String, val symbols: Set<String>, val startupOnly: Boolean = false) {
@@ -53,7 +53,8 @@ class UpgradeCoordinator(
         var firstRestore: Long? = null
         val acknowledged = HashSet<String>()
         fun matches(other: Request): Boolean =
-            !cancelled && request.identity == other.identity && request.catalog == other.catalog && request.enabled == other.enabled
+            !cancelled && request.identity == other.identity && request.catalog == other.catalog && request.enabled == other.enabled &&
+            (request.trigger == Trigger.MANUAL_SCAN) == (other.trigger == Trigger.MANUAL_SCAN)
     }
 
     private val lock = Any()
@@ -193,7 +194,7 @@ class UpgradeCoordinator(
             work.trace.mark(RecoveryTrace.Step.IDENTITY_VERIFIED)
             val choice = AdaptPolicy.chooseVerified(request.identity, tables.local(request.identity, request.catalog),
                 tables.bundled(request.identity), request.catalog)
-            val existing = choice.table
+            val existing = choice.table.takeUnless { request.trigger == Trigger.MANUAL_SCAN }
             if (existing != null) {
                 // 内置表可不带 catalog；交付时绑定本次请求的目录。
                 deliver(existing.copy(catalog = request.catalog), complete = true, save = false, observation = choice.observe)

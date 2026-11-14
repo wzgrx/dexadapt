@@ -1,6 +1,6 @@
 # DexAdapt
 
-当前版本：[0.12.0](https://github.com/wzgrx/dexadapt/releases/tag/v0.12.0)。
+当前版本：[0.13.0](https://github.com/wzgrx/dexadapt/releases/tag/v0.13.0)。
 
 已验证完整表可通过宿主桥接直达，缺表才进入后台扫描。
 
@@ -183,3 +183,5 @@ linker.clazz(MySymbols.feed).resolve().firstField { name = "poi" }            //
 - 方法差异保留操作码分数，另列字符串加载顺序、常量/调用/字段变化证据；1.0不代表语义等价。lint提示Kotlin实现名的脆弱依赖。
 
 本次不改SymbolResolver/SymbolSource/DexKitSource匹配规则，旧消费者不必因解析语义变化强制重扫；升级依赖仍应固定提交并执行各自矩阵回归。
+
+Android 传输模块 `android-runtime` 只依赖运行时与编译期 android.jar，提供阶段通知，不引入 Hook 框架。
