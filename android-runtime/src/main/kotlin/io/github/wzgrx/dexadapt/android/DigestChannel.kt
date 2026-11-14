@@ -16,6 +16,7 @@ import java.util.concurrent.TimeoutException
 object DigestChannel {
     const val METHOD = "identity.ticket.get.v1"
     const val NAME = "identityTicketName"
+    private val attempted = java.util.concurrent.ConcurrentHashMap<String, Long>()
     private val calls = ThreadPoolExecutor(2, 2, 0, TimeUnit.MILLISECONDS, SynchronousQueue(),
         { task -> Thread(task, "adapt-digest-request").apply { isDaemon = true } }, ThreadPoolExecutor.AbortPolicy())
 
@@ -36,6 +37,11 @@ object DigestChannel {
         val provider = runCatching { context.packageManager.resolveContentProvider(uri.authority.orEmpty(), 0) }.getOrNull() ?: run { status("provider_unavailable"); return null }
         val uid = trustedUid(context, module, certificate) ?: run { status("module_untrusted_or_invisible"); return null }
         if (provider.packageName != module || provider.applicationInfo.uid != uid) { status("provider_mismatch"); return null }
+        val now = android.os.SystemClock.elapsedRealtime()
+        val previous = attempted.putIfAbsent(name, now)
+        if (previous != null) {
+            if (now - previous < 3000 || !attempted.replace(name, previous, now)) return null
+        }
         val task = FutureTask {
             context.contentResolver.call(uri, METHOD, pkg, Bundle().apply { putString(NAME, name) })?.getString("json")
         }
@@ -44,6 +50,10 @@ object DigestChannel {
         return try { task.get(1800, TimeUnit.MILLISECONDS)?.takeIf { it.length <= 2048 }.also { status(if (it != null) "success" else "empty_reply") } }
         catch (_: TimeoutException) { status("timeout"); task.cancel(true); null }
         catch (_: InterruptedException) { status("interrupted"); task.cancel(true); Thread.currentThread().interrupt(); null }
-        catch (error: Exception) { status("failed_" + error.javaClass.simpleName); null }
+        catch (error: Exception) {
+            val cause = error.cause ?: error
+            status("failed_" + cause.javaClass.simpleName + "_" + cause.message.orEmpty().take(180))
+            null
+        }
     }
 }
