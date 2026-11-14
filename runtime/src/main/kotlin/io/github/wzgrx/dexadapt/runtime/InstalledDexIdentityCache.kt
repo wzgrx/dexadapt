@@ -30,14 +30,16 @@ class InstalledDexIdentityCache(
     private val slots = ConcurrentHashMap<String, Slot>()
     private var timing = ScanTiming.NONE
     private var readTicket: (String) -> String? = { null }
+    private var ticketClock: () -> Long = System::nanoTime
     private var readsTickets = false
     private var publishesTickets = false
     private var publishTicket: (String, String) -> Boolean = { _, _ -> false }
     private val published = ConcurrentHashMap<String, String>()
 
     /** 在首次查询之前配置。read 必须只读取模块控制的认证通道，不能直接暴露给未认证输入。 */
-    fun withTickets(read: ((String) -> String?)? = null, publish: ((String, String) -> Boolean)? = null): InstalledDexIdentityCache {
+    fun withTickets(read: ((String) -> String?)? = null, publish: ((String, String) -> Boolean)? = null, leaseClock: () -> Long = System::nanoTime): InstalledDexIdentityCache {
         check(slots.isEmpty())
+        ticketClock = leaseClock
         readsTickets = read != null; publishesTickets = publish != null
         readTicket = read ?: { null }; publishTicket = publish ?: { _, _ -> false }
         return this
@@ -102,10 +104,10 @@ class InstalledDexIdentityCache(
                         .getOrNull()?.let(VerifiedDigestTicket::parse)
                     val lease = if (document == null) runCatching { readTicket(VerifiedDigestTicket.pendingName(stamp)) }
                         .getOrNull()?.let(DigestReadLease::parse) else null
-                    val now = timing.now()
+                    val now = ticketClock()
                     if (document == null && lease?.installation == stamp && lease.expiresNanos in (now + 1)..(now + 3_000_000_000L)) {
                         timing.measure("ticket_wait") {
-                            while (timing.now() < lease.expiresNanos && document == null &&
+                            while (ticketClock() < lease.expiresNanos && document == null &&
                                 slot.generation.get() == generation) {
                                 try { Thread.sleep(20) } catch (_: InterruptedException) { Thread.currentThread().interrupt(); break }
                                 document = runCatching { readTicket(VerifiedDigestTicket.fileName(stamp)) }
@@ -128,7 +130,7 @@ class InstalledDexIdentityCache(
                 if (reusable && publishesTickets) {
                     val stamp = key(packageName, before)
                     runCatching { publishTicket(VerifiedDigestTicket.pendingName(stamp),
-                        DigestReadLease(stamp, timing.now() + 3_000_000_000L).toJson()) }
+                        DigestReadLease(stamp, ticketClock() + 3_000_000_000L).toJson()) }
                 }
                 onRead()
                 HostCodeIdentity(packageName, before.installation.versionCode,

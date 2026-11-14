@@ -9,13 +9,15 @@ class ScanTiming(
     private val emit: (Sample) -> Unit = {},
 ) {
     @Serializable data class Sample(val phase: String, val elapsedNanos: Long, val cpuNanos: Long? = null,
-                      val symbol: String? = null, val cached: Boolean = false, val selfNanos: Long? = null)
+                      val symbol: String? = null, val cached: Boolean = false, val selfNanos: Long? = null, val count: Long = 1)
     fun now(): Long = clock()
-    fun cpu(): Long? = cpuClock()
-    fun record(phase: String, elapsed: Long, cpu: Long? = null, symbol: String? = null, cached: Boolean = false, selfNanos: Long? = null) {
-        runCatching { emit(Sample(phase, elapsed.coerceAtLeast(0), cpu?.coerceAtLeast(0), symbol, cached, selfNanos)) }
+    fun cpu(): Long? = if (this === NONE) null else cpuClock()
+    fun record(phase: String, elapsed: Long, cpu: Long? = null, symbol: String? = null, cached: Boolean = false, selfNanos: Long? = null, count: Long = 1) {
+        if (this === NONE) return
+        runCatching { emit(Sample(phase, elapsed.coerceAtLeast(0), cpu?.coerceAtLeast(0), symbol, cached, selfNanos, count)) }
     }
     fun <T> measure(phase: String, symbol: String? = null, cached: Boolean = false, block: () -> T): T {
+        if (this === NONE) return block()
         val start = clock()
         val cpu = cpuClock()
         return try { block() } finally {

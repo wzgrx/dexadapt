@@ -44,6 +44,11 @@ class SymbolResolver internal constructor(
     private val done = HashMap<String, Result<Resolved>>()
     private var timing = ScanTiming.NONE
     private val nestedNanos = ArrayList<Long>()
+    private val cacheCounts = HashMap<String, Long>()
+    private fun flushCacheCounts() {
+        cacheCounts.forEach { (id, count) -> timing.record("symbol_cache_hits", 0, symbol = id, cached = true, count = count) }
+        cacheCounts.clear()
+    }
     fun withTiming(value: ScanTiming): SymbolResolver { check(done.isEmpty()); timing = value; return this }
 
     /** 正在解析的符号（依赖链），用来发现成环。 */
@@ -99,6 +104,7 @@ class SymbolResolver internal constructor(
             if (ms >= SLOW_MS) log("  ${s.id}: ${ms}ms")
             onProgress(i + 1, symbols.size)
         }
+        flushCacheCounts()
         return SymbolTable(versionCode, source.dexSha256, entries, missing, absent)
     }
 
@@ -124,8 +130,10 @@ class SymbolResolver internal constructor(
                 if (!skip(s)) resolve(s).fold({ entries[s.id] = it }, { missing[s.id] = it.message ?: it.toString() })
                 onProgress(++count, all.size)
             }
+            flushCacheCounts()
             if (i < stages.lastIndex) onStage(SymbolTable(versionCode, source.dexSha256, entries.toSortedMap(), missing.toSortedMap(), absent, partial = true))
         }
+        flushCacheCounts()
         return SymbolTable(versionCode, source.dexSha256, entries, missing, absent)
     }
 
@@ -139,6 +147,11 @@ class SymbolResolver internal constructor(
     }
 
     fun resolve(symbol: Symbol): Result<Resolved> {
+        if (timing === ScanTiming.NONE) return resolveInternal(symbol)
+        done[symbol.id]?.let {
+            cacheCounts[symbol.id] = (cacheCounts[symbol.id] ?: 0L) + 1
+            return it
+        }
         val began = timing.now()
         val cpu = timing.cpu()
         val cached = symbol.id in done

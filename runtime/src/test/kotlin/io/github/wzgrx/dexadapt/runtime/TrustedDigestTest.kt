@@ -86,4 +86,22 @@ class TrustedDigestTest {
         assertFalse(gate.accept(msg(seq=3)))
         assertTrue(gate.accept(msg("new")))
     }
+
+    @Test fun failedProducerLeaseExpiresEvenWhenTimingCollectionIsDisabled() {
+        val apk=temp.newFile("failed.apk").apply { writeText("a") }
+        val installed=InstalledDexIdentityCache.Installation(1,10,listOf(apk))
+        val channel=ConcurrentHashMap<String,String>()
+        val owner=InstalledDexIdentityCache({installed},temp.newFolder()) { throw java.io.IOException("interrupted producer") }
+            .withTickets(publish={n,raw->channel[n]=raw;true})
+        assertNull(owner.current("host"))
+        var reads=0
+        val host=InstalledDexIdentityCache({installed},temp.newFolder()) { reads++; "a".repeat(64) }
+            .withTickets(read=channel::get)
+        val pool=Executors.newSingleThreadExecutor()
+        try {
+            val result=pool.submit<HostCodeIdentity?> { host.current("host") }.get(5,TimeUnit.SECONDS)
+            assertEquals("a".repeat(64),result?.dexSha256)
+            assertEquals(1,reads)
+        } finally {pool.shutdownNow()}
+    }
 }

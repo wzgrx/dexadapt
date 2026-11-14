@@ -36,12 +36,13 @@ class ScanTimingTest {
         val resolver = SymbolResolver(source,1).withTiming(ScanTiming(clock={ ++clock },emit=samples::add))
         assertTrue(resolver.resolve(method).isSuccess)
         assertTrue(resolver.resolve(method).isSuccess)
+        val profiled=resolver.table(listOf(cls,method))
         val calls=samples.filter { it.phase=="symbol_resolve" }
         assertEquals(setOf("owner","method"),calls.map { it.symbol }.toSet())
-        assertTrue(calls.last().cached)
+        assertTrue(samples.any { it.phase=="symbol_cache_hits" && it.cached && it.count > 0 })
         assertTrue(calls.all { it.selfNanos != null && it.selfNanos <= it.elapsedNanos })
         val expected=SymbolResolver(source,1).table(listOf(cls,method))
-        assertEquals(expected,resolver.table(listOf(cls,method)))
+        assertEquals(expected,profiled)
     }
     @Test fun failingObserverCannotBreakResolution() {
         val cls=ClassSymbol("owner", ClassQuery(name="example.Owner"))
