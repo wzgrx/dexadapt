@@ -120,4 +120,17 @@ class InstallationReuseTest {
         outbox.ready()
         assertNull(outbox.next())
     }
+
+    @Test fun lateTransportFailureCannotOverwriteAReadyWakeup() {
+        val outbox = RecoveryOutbox { 1_000_000_000L }
+        outbox.bind("token", 123)
+        outbox.effect("token", 456)
+        val beforeReady = outbox.next()!!
+        outbox.ready()
+        assertEquals(0L, outbox.complete(beforeReady, RecoveryOutbox.Reply.TEMPORARY))
+        val retry = outbox.next()!!
+        assertEquals(beforeReady, retry)
+        assertEquals(250L shl 1, outbox.complete(retry, RecoveryOutbox.Reply.TEMPORARY))
+        assertNull(outbox.next())
+    }
 }

@@ -67,6 +67,7 @@ class RecoveryOutbox(private val clock: () -> Long = System::nanoTime) {
         var failures: Int = 0,
         var inFlight: Message? = null,
         var epoch: Long = 0,
+        var readyDuringFlight: Boolean = false,
         val deadline: Long,
     )
     private var target: Target? = null
@@ -93,7 +94,7 @@ class RecoveryOutbox(private val clock: () -> Long = System::nanoTime) {
     }
 
     /** 已确认通道恢复时取消旧退避；不复制在途消息，不重置原始时间及截止时间。 */
-    @Synchronized fun ready() { target?.let { if (!it.done) it.epoch = 0 } }
+    @Synchronized fun ready() { target?.let { if (!it.done) { it.epoch = 0; if (it.inFlight != null) it.readyDuringFlight = true } } }
 
     @Synchronized fun next(): Message? {
         val t = target ?: return null
@@ -102,6 +103,7 @@ class RecoveryOutbox(private val clock: () -> Long = System::nanoTime) {
         if (t.done || t.inFlight != null || now < t.epoch) return null
         val event = if (!t.bound) Message(t.token, RecoveryReceipt.State.HOST_BOUND, t.boundAt)
             else Message(t.token, RecoveryReceipt.State.FIRST_EFFECT, t.effectAt ?: return null)
+        t.readyDuringFlight = false
         t.inFlight = event
         return event
     }
@@ -116,7 +118,7 @@ class RecoveryOutbox(private val clock: () -> Long = System::nanoTime) {
                 if (message.state == RecoveryReceipt.State.HOST_BOUND) t.bound = true else t.done = true
             }
             Reply.TEMPORARY, Reply.RENEW -> {
-                val delay = 250L shl t.failures.coerceAtMost(5)
+                val delay = if (t.readyDuringFlight) 0L else 250L shl t.failures.coerceAtMost(5)
                 t.failures = (t.failures + 1).coerceAtMost(5)
                 t.epoch = clock() + TimeUnit.MILLISECONDS.toNanos(delay)
                 return delay
