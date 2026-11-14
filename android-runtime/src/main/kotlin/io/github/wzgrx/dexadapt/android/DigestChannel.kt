@@ -30,18 +30,20 @@ object DigestChannel {
     }.getOrNull()
 
     @Suppress("DEPRECATION")
-    fun request(context: Context, uri: Uri, module: String, certificate: String, pkg: String, name: String): String? {
-        if (!name.matches(Regex("identity-ticket-v1-[a-f0-9]{64}\\.json"))) return null
-        val provider = runCatching { context.packageManager.resolveContentProvider(uri.authority.orEmpty(), 0) }.getOrNull() ?: return null
-        val uid = trustedUid(context, module, certificate) ?: return null
-        if (provider.packageName != module || provider.applicationInfo.uid != uid) return null
+    fun request(context: Context, uri: Uri, module: String, certificate: String, pkg: String, name: String, observe: (String) -> Unit = {}): String? {
+        fun status(value: String) { runCatching { observe(value) } }
+        if (!name.matches(Regex("identity-ticket-v1-[a-f0-9]{64}\\.json"))) { status("invalid_name"); return null }
+        val provider = runCatching { context.packageManager.resolveContentProvider(uri.authority.orEmpty(), 0) }.getOrNull() ?: run { status("provider_unavailable"); return null }
+        val uid = trustedUid(context, module, certificate) ?: run { status("module_untrusted_or_invisible"); return null }
+        if (provider.packageName != module || provider.applicationInfo.uid != uid) { status("provider_mismatch"); return null }
         val task = FutureTask {
             context.contentResolver.call(uri, METHOD, pkg, Bundle().apply { putString(NAME, name) })?.getString("json")
         }
-        try { calls.execute(task) } catch (_: RejectedExecutionException) { return null }
-        return try { task.get(1800, TimeUnit.MILLISECONDS)?.takeIf { it.length <= 2048 } }
-        catch (_: TimeoutException) { task.cancel(true); null }
-        catch (_: InterruptedException) { task.cancel(true); Thread.currentThread().interrupt(); null }
-        catch (_: Exception) { null }
+        try { calls.execute(task) } catch (_: RejectedExecutionException) { status("queue_full"); return null }
+        status("submitted")
+        return try { task.get(1800, TimeUnit.MILLISECONDS)?.takeIf { it.length <= 2048 }.also { status(if (it != null) "success" else "empty_reply") } }
+        catch (_: TimeoutException) { status("timeout"); task.cancel(true); null }
+        catch (_: InterruptedException) { status("interrupted"); task.cancel(true); Thread.currentThread().interrupt(); null }
+        catch (error: Exception) { status("failed_" + error.javaClass.simpleName); null }
     }
 }
