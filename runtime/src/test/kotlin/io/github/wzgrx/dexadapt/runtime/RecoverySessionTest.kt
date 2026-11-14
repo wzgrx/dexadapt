@@ -83,4 +83,36 @@ class RecoverySessionTest {
         assertEquals(recoveryTableFingerprint(t), recoveryTableFingerprint(t.copy(apk = "new-path", module = "new", recoveryToken = "new")))
         assertNotEquals(recoveryTableFingerprint(t), recoveryTableFingerprint(t.copy(entries = emptyMap())))
     }
+    @Test fun unchangedBindingTransfersEvidenceAcrossNotificationAndReceiptOrderings() {
+        for (oldState in listOf("bound-flight", "effect-flight", "accepted", "rejected")) {
+            var now = 1_000L
+            val outbox = RecoveryOutbox { now }
+            outbox.bind("renewal", 110)
+            outbox.effect("renewal", 150)
+            val bound = outbox.next()!!
+            var late = bound
+            if (oldState != "bound-flight") {
+                outbox.complete(bound, RecoveryOutbox.Reply.ACCEPTED)
+                late = outbox.next()!!
+                if (oldState == "accepted") outbox.complete(late, RecoveryOutbox.Reply.ACCEPTED)
+                if (oldState == "rejected") outbox.complete(late, RecoveryOutbox.Reply.REJECTED)
+            }
+            assertFalse(outbox.transfer("foreign", "notice"))
+            assertTrue(oldState, outbox.transfer("renewal", "notice"))
+            // 原续发的迟到回调不能操作新通知的待发箱。
+            assertNull(outbox.complete(late, RecoveryOutbox.Reply.TEMPORARY))
+            val rebound = outbox.next()!!
+            assertEquals("notice", rebound.token)
+            assertEquals(110L, rebound.observed)
+            outbox.complete(rebound, RecoveryOutbox.Reply.ACCEPTED)
+            val effect = outbox.next()!!
+            assertEquals(State.FIRST_EFFECT, effect.state)
+            assertEquals(150L, effect.observed)
+            outbox.complete(effect, RecoveryOutbox.Reply.ACCEPTED)
+            assertNull(outbox.next())
+            now += java.util.concurrent.TimeUnit.MINUTES.toNanos(3)
+            assertFalse(outbox.transfer("notice", "expired"))
+        }
+    }
+
 }

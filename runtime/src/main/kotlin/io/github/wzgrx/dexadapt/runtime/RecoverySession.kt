@@ -93,6 +93,17 @@ class RecoveryOutbox(private val clock: () -> Long = System::nanoTime) {
         return true
     }
 
+    /** 调用方已确认绑定内容不变时，把证据转给新交付；旧回执成功或迟到都不能抹掉原始首效。
+     * 不能用于身份/目录/目标变化，且不会延长原来的补报截止时间。
+     */
+    @Synchronized fun transfer(previous: String, next: String): Boolean {
+        require(next.isNotBlank())
+        val old = target?.takeIf { it.token == previous && previous != next } ?: return false
+        if (clock() >= old.deadline) return false
+        target = Target(next, old.boundAt, old.effectAt, deadline = old.deadline)
+        return true
+    }
+
     /** 已确认通道恢复时取消旧退避；不复制在途消息，不重置原始时间及截止时间。 */
     @Synchronized fun ready() { target?.let { if (!it.done) { it.epoch = 0; if (it.inFlight != null) it.readyDuringFlight = true } } }
 
