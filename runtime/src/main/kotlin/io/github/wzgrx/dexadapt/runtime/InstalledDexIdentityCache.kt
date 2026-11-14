@@ -30,13 +30,16 @@ class InstalledDexIdentityCache(
     private val slots = ConcurrentHashMap<String, Slot>()
     private var timing = ScanTiming.NONE
     private var readTicket: (String) -> String? = { null }
+    private var readsTickets = false
+    private var publishesTickets = false
     private var publishTicket: (String, String) -> Boolean = { _, _ -> false }
     private val published = ConcurrentHashMap<String, String>()
 
     /** 在首次查询之前配置。read 必须只读取模块控制的认证通道，不能直接暴露给未认证输入。 */
-    fun withTickets(read: (String) -> String? = { null }, publish: (String, String) -> Boolean = { _, _ -> false }): InstalledDexIdentityCache {
+    fun withTickets(read: ((String) -> String?)? = null, publish: ((String, String) -> Boolean)? = null): InstalledDexIdentityCache {
         check(slots.isEmpty())
-        readTicket = read; publishTicket = publish
+        readsTickets = read != null; publishesTickets = publish != null
+        readTicket = read ?: { null }; publishTicket = publish ?: { _, _ -> false }
         return this
     }
     fun withTiming(value: ScanTiming): InstalledDexIdentityCache { check(slots.isEmpty()); timing = value; return this }
@@ -47,6 +50,7 @@ class InstalledDexIdentityCache(
     }?.let { VerifiedDigestTicket.fileName(key(packageName, it)) }
 
     private fun publish(pkg: String, snapshot: Snapshot, identity: HostCodeIdentity) {
+        if (!publishesTickets) return
         val stamp = key(pkg, snapshot)
         if (published[pkg] == stamp) return
         val document = VerifiedDigestTicket(packageName = pkg, versionCode = identity.versionCode,
@@ -79,6 +83,7 @@ class InstalledDexIdentityCache(
             val reusable = before.files.all { it.canReuse(System.currentTimeMillis()) }
             val prior = slot.entry
             if (prior?.generation == generation && prior.snapshot == before && reusable) {
+                timing.record("identity_memory_hit", 0)
                 publish(packageName, before, prior.identity)
                 return@run prior.identity.takeIf { slot.generation.get() == generation }
             }
@@ -86,10 +91,11 @@ class InstalledDexIdentityCache(
             val stored = if (reusable && persistent) load(packageName, before) else null
             if (stored != null && slot.generation.get() == generation && capture(packageName) == before) {
                 slot.entry = Entry(generation, before, stored)
+                timing.record("identity_record_hit", 0)
                 publish(packageName, before, stored)
                 return@run stored
             }
-            if (reusable) {
+            if (reusable && readsTickets) {
                 val stamp = key(packageName, before)
                 val ticket = timing.measure("ticket_read") {
                     var document = runCatching { readTicket(VerifiedDigestTicket.fileName(stamp)) }
@@ -119,7 +125,7 @@ class InstalledDexIdentityCache(
                 }
             }
             val identity = try {
-                if (reusable) {
+                if (reusable && publishesTickets) {
                     val stamp = key(packageName, before)
                     runCatching { publishTicket(VerifiedDigestTicket.pendingName(stamp),
                         DigestReadLease(stamp, timing.now() + 3_000_000_000L).toJson()) }

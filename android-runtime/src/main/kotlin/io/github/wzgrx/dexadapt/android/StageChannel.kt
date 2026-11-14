@@ -14,6 +14,7 @@ object StageChannel {
     const val METHOD = "adapt.stage.subscribe.v1"
     const val CALLBACK = "stageCallback"
     const val EPOCH = "stageServer"
+    const val SERVER = "stageServerBinder"
     private const val DESCRIPTOR = "io.github.wzgrx.dexadapt.StageSignal.v1"
     private const val NOTICE = IBinder.FIRST_CALL_TRANSACTION
 
@@ -30,6 +31,7 @@ object StageChannel {
 
     class Publisher {
         val epoch: String = java.util.UUID.randomUUID().toString()
+        val endpoint: IBinder = Binder()
         private data class Target(val binder: IBinder, val death: IBinder.DeathRecipient)
         private val targets = ConcurrentHashMap<String, Target>()
         private val latest = ConcurrentHashMap<String, StageNotice>()
