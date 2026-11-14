@@ -38,11 +38,11 @@ class SymbolLinker(
      */
     private val useGuess: (String) -> Boolean = { false },
 ) {
-    private class State(val table: SymbolTable?) {
-        val cache = ConcurrentHashMap<String, Result<Any>>()
+    private class State(val table: SymbolTable?, val cache: ConcurrentHashMap<String, Result<Any>> = ConcurrentHashMap(),
+                        val ids: ConcurrentHashMap<Any, String> = ConcurrentHashMap()) {
         val absent: Set<String> = table?.absent?.toHashSet().orEmpty()
         /** 反查：查出来的 Class / Executable / Field → 符号 id。 */
-        val ids = ConcurrentHashMap<Any, String>()
+
     }
 
     @Volatile
@@ -76,8 +76,16 @@ class SymbolLinker(
     val supported: Boolean get() = table != null
 
     /** 换成新表（热适配）：连同按旧表查过的结果一起换掉。 */
-    fun replace(newTable: SymbolTable?) {
+    @Synchronized fun replace(newTable: SymbolTable?) {
         state = State(newTable)
+    }
+
+    /** 只改当前表的交付令牌；解析对象和进行中的读取快照保持有效。 */
+    @Synchronized fun updateRecoveryToken(expected: SymbolTable, token: String): Boolean {
+        val old = state
+        if (old.table !== expected) return false
+        state = State(expected.copy(recoveryToken = token), old.cache, old.ids)
+        return true
     }
 
     fun clazz(symbol: ClassSymbol): Class<*> = lookup(symbol) { r: Resolved.Class -> load(r.name) } as Class<*>

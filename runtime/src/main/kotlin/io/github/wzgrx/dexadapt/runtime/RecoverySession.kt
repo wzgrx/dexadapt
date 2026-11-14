@@ -92,6 +92,9 @@ class RecoveryOutbox(private val clock: () -> Long = System::nanoTime) {
         return true
     }
 
+    /** 已确认通道恢复时取消旧退避；不复制在途消息，不重置原始时间及截止时间。 */
+    @Synchronized fun ready() { target?.let { if (!it.done) it.epoch = 0 } }
+
     @Synchronized fun next(): Message? {
         val t = target ?: return null
         val now = clock()
