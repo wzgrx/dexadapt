@@ -41,3 +41,16 @@ Android 可能延后后台任务；模块没有运行或收不到广播时，由
 `NeedsScan` 交给唯一持久任务，`Unavailable` 仅做有界重试。返回的表仍由宿主在绑定前完整校验。
 宿主把首次启动的单调时钟起点带到桥接；模块重启后，报告允许观察时间早于本次交付。
 `InstalledDexIdentityCache.current(packageName, onRead)` 在实际开始一次完整 DEX 摘要时回调，命中不计数。
+
+### 桥接就绪与摘要代际（0.12.0）
+
+消费方在已经鉴权的通道首次确认成功后调用 `RecoveryOutbox.ready()` 并唤醒一次待发箱。
+在途消息仍由 `next/complete` 串行推进，原始单调时间不变。断开后保留有限退避，不重放业务写入。
+初始续发也应合并到一个在途请求，桥接就绪取消尚未执行的旧计时器。
+
+`SymbolLinker.updateRecoveryToken(expected, token)` 只接受当前表实例；它复制交付元数据并复用链接缓存，
+正在执行的快照仍引用原表。内容变化继续走 `replace`，不能用此接口绕过身份、目录和目标校验。
+
+`InstalledDexIdentityCache(snapshot, directory)` 可选使用应用自己的私有目录。首次读取仍计算所有有代码 APK 的
+完整 DEX SHA-256；持久记录绑定系统安装版本/更新时间和全部有序文件的可靠身份。每次命中核对读取前后快照，
+文件键或 ctime 不可靠时退回完整读取，记录损坏也完整重读。宿主与模块使用各自目录，不接受对方声称的摘要。

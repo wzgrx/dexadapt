@@ -1,6 +1,6 @@
 # DexAdapt
 
-当前版本：[0.11.0](https://github.com/wzgrx/dexadapt/releases/tag/v0.11.0)。
+当前版本：[0.12.0](https://github.com/wzgrx/dexadapt/releases/tag/v0.12.0)。
 
 已验证完整表可通过宿主桥接直达，缺表才进入后台扫描。
 
