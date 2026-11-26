@@ -8,6 +8,16 @@ pluginManagement {
 dependencyResolutionManagement {
     repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
     repositories {
+        maven {
+            url = uri(System.getenv("DEXKIT_MAVEN_REPO")
+                ?: ((System.getenv("DEXKIT_SOURCE_HOME")
+                    ?: (System.getProperty("user.home") + "/tools/dexkit-source")) + "/maven"))
+            content {
+                includeModule("org.luckypray", "dexkit")
+                includeModule("com.google.flatbuffers", "flatbuffers-java")
+                includeGroup("io.github.skylot")
+            }
+        }
         mavenCentral()
         google()
         // 传统 Xposed API（de.robv.android.xposed:api:82）只在这里有

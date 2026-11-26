@@ -1,0 +1,7 @@
+{
+  "dexkitVersion": "2.3.0-a855c58e-fb25.12.19-r2",
+  "dexkitCommit": "a855c58e54538c6926940491a72616044e38264a",
+  "flatbuffersVersion": "25.12.19",
+  "flatbuffersCommit": "03fffb25e2d777462b719cb4964249c30b19d58f",
+  "ndkVersion": "30.0.16248370"
+}

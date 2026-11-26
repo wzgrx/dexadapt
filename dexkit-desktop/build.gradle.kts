@@ -35,4 +35,10 @@ tasks.test {
     val samples = System.getenv("DEXADAPT_SAMPLES").orEmpty()
     environment("DEXADAPT_SAMPLES", samples)
     inputs.property("samples", samples)
+    val nativeRoot = System.getenv("DEXKIT_DESKTOP_HOME")?.takeIf { it.isNotBlank() }
+        ?: (System.getProperty("user.home") + "/tools/dexkit-desktop")
+    val nativeLibrary = File(nativeRoot, libs.versions.dexkit.get() + "/libdexkit.so")
+    inputs.files(provider { listOf(nativeLibrary).filter { it.isFile } })
+        .withPropertyName("dexkitNativeLibrary")
+        .withPathSensitivity(PathSensitivity.NONE)
 }

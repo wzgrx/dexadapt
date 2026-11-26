@@ -1,14 +1,14 @@
 [versions]
 kotlin = "2.4.21"
-serializationJson = "1.11.0"
+serializationJson = "1.13.0"
 dexlib2 = "3.0.10"
 # DexKit：手机上本机适配和电脑上的一致性校验用同一个版本。
-dexkit = "2.3.0"
+dexkit = "2.3.0-a855c58e-fb25.12.19-r2"
 # DexKit AAR 的 POM 依赖的 FlatBuffers（电脑上单独加；升级 DexKit 时一起核对）。
-dexkitFlatbuffers = "23.5.26"
+dexkitFlatbuffers = "25.12.19"
 junit = "4.13.2"
 # APK 签名校验（和 AGP 同版本）
-apksig = "9.4.1"
+apksig = "9.5.3"
 snakeyamlEngine = "3.2"
 # 读开源库官方 jar（开源库识别）
 asm = "9.11.1"
@@ -19,7 +19,7 @@ yukihookapi = "1.3.2"
 ezxhelper = "2.2.1"
 kavaref = "1.1.1"
 # jadx 插件（compileOnly，jadx 自己提供）
-jadx = "1.5.6"
+jadx = "1.5.7"
 
 [libraries]
 kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "serializationJson" }
