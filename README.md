@@ -1,6 +1,6 @@
 # DexAdapt
 
-当前源码版本为 0.13.1，已发布版本为 [0.13.0](https://github.com/wzgrx/dexadapt/releases/tag/v0.13.0)。
+当前版本为 [0.13.1](https://github.com/wzgrx/dexadapt/releases/tag/v0.13.1)。
 
 构建前按 [依赖构建说明](docs/BUILDING.md) 准备固定源码的 DexKit、FlatBuffers 与 jadx 构件。
 
